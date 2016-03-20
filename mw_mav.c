@@ -1,0 +1,443 @@
+#include "mw_mav.h"
+#include <mw/shm.h>
+#include <stdio.h>
+#include <math.h>
+
+#define MW_TIMEOUT 3 //3s timeout for mw
+static uint8_t mw_status=0; //0-all ok; 1-no connection?
+
+static struct S_MSG mw_msg;
+static struct S_MSP_BOXCONFIG boxconf;
+
+void mav_retrieve_init() {
+	//this retrievs the initial set of settings from MW like boxconfiguration, etc
+	uint8_t filter;
+
+	//ident
+	filter = MSP_IDENT;
+	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+	while (1) {
+		mspmsg_IDENT_serialize(&mw_msg,NULL);
+		shm_put_outgoing(&mw_msg);
+		mssleep(50);
+		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
+	} 
+
+	//status
+	filter = MSP_STATUS;
+	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+	while (1) {
+		mspmsg_STATUS_serialize(&mw_msg,NULL);
+		shm_put_outgoing(&mw_msg);
+		mssleep(50);
+		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
+	} 
+
+	//boxids
+	filter = MSP_BOXIDS;
+	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+	while (1) {
+		mspmsg_BOXIDS_serialize(&mw_msg,NULL);
+		shm_put_outgoing(&mw_msg);
+		mssleep(50);
+		if (shm_scan_incoming_f(&mw_msg,&filter,1)) {
+			mspmsg_BOXIDS_parse(&boxconf,&mw_msg);
+			break; //got the response
+		}
+	} 	
+
+	mspmsg_BOX_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mw_keepalive() {
+	//keep alive for MultiWii and the service
+	static uint8_t err_counter = 0; //number of missed status messages
+	uint8_t filter;
+
+	mspmsg_LOCALSTATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
+
+	mspmsg_STATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+
+	mspmsg_BOX_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
+
+	filter = MSP_STATUS;
+	if (!shm_scan_incoming_f(&mw_msg,&filter,1)) err_counter++;
+	else {
+		err_counter = 0;
+		mw_status = 0;
+	}
+
+	if (err_counter>MW_TIMEOUT) {
+		mw_status = 1;
+	}
+}
+
+void mav_arm() {
+	//boxconf.active[BOXARM] = toggleBox(boxconf.active[BOXARM]);
+	//mspmsg_SET_BOX_serialize(&msg,&boxconf);
+	//shm_put_outgoing(&msg);	
+}
+
+void mav_disarm() {
+
+}
+
+void mav_rc(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
+	static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
+
+	throttle-=500; //mid is 0
+
+	rc.throttle += throttle/50; //0-1000 (500 mid)
+
+	if (rc.throttle>2000) rc.throttle=2000;
+	if (rc.throttle<1000) rc.throttle=1000;
+
+	//translate between -1000 1000 and mw pwm (1000,2000)
+	rc.yaw = (yaw/2)+1500;
+	rc.roll = (roll/2)+1500;
+	rc.pitch = (pitch/2)+1500;
+
+	//printf("Feeding: t: %u y: %u p: %u r: %u, o: %i\n",rc.throttle,rc.yaw,rc.pitch, rc.roll,throttle);
+	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
+	shm_put_outgoing(&mw_msg);
+}
+
+
+void mav_attitude_refresh() {
+	mspmsg_ATTITUDE_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+}
+
+void mav_attitude_quaternions(float *w, float *x, float *y, float *z) {
+	struct S_MSP_ATTITUDE attitude;
+	
+	shm_get_incoming(&mw_msg,MSP_ATTITUDE);
+	mspmsg_ATTITUDE_parse(&attitude,&mw_msg);
+
+	//printf("yaw: %i x: %i y: %i\n",attitude.heading,attitude.angx/10,attitude.angy/10);
+
+	float a = (M_PI / 180) * attitude.angx/10.f;
+	float b = (M_PI / 180) * attitude.heading;
+	float c = -(M_PI / 180) * attitude.angy/10.f;
+
+    double c1 = cos(a/2);
+    double s1 = sin(a/2);
+    double c2 = cos(b/2);
+    double s2 = sin(b/2);
+    double c3 = cos(c/2);
+    double s3 = sin(c/2);
+    double c1c2 = c1*c2;
+    double s1s2 = s1*s2;
+    (*w) =c1c2*c3 - s1s2*s3;
+  	(*x) =c1c2*s3 + s1s2*c3;
+	(*y) =s1*c2*c3 + c1*s2*s3;
+	(*z) =c1*s2*c3 - s1*c2*s3;
+}
+
+void mav_gps_refresh() {
+	mspmsg_RAW_GPS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mav_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
+	struct S_MSP_RAW_GPS gps;
+	
+	shm_get_incoming(&mw_msg,MSP_RAW_GPS);
+	mspmsg_RAW_GPS_parse(&gps,&mw_msg);	
+
+	(*fix) = gps.fix?3:0;
+	(*lat) = gps.lat;
+	(*lon) = gps.lon;
+	(*alt) = gps.alt;
+	(*vel) = gps.speed;
+	(*cog) = gps.ground_course*10;
+	(*satellites_visible) = gps.num_sat;
+}
+
+uint16_t get_comm_drop_count() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
+
+	return lstatus.crc_error_count;
+}
+
+uint16_t get_comm_drop_rate() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
+
+	if (!lstatus.rx_count) return 0;
+	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
+}
+
+//re-requests pid values and names
+//if reset is set - re-request is issues
+uint8_t mav_param_refresh(uint8_t reset) {
+	uint8_t filter;
+	static uint8_t state = 0;
+	static uint8_t got_pid = 0;
+	static uint8_t got_pidnames = 0;
+
+	if (reset) {
+		state=0;
+		got_pid = 0;
+		got_pidnames = 0;
+	}
+
+
+	switch (state) {
+		case 0: //request pids
+			//read existing value to invalidate them
+
+			//pidnames are currently hardcoded in MW hence no need to request them
+			//filter = MSP_PIDNAMES;
+			//shm_scan_incoming_f(&mw_msg,&filter,1));
+
+			filter = MSP_PID;
+			shm_scan_incoming_f(&mw_msg,&filter,1);
+			
+			//re-request
+			//mspmsg_PIDNAMES_serialize(&mw_msg,NULL);
+			//shm_put_outgoing(&mw_msg);	
+
+			mspmsg_PID_serialize(&mw_msg,NULL);
+			shm_put_outgoing(&mw_msg);	
+			state = 1;
+			break;
+		case 1: //read pids
+			//check if we got a new responses
+			//filter = MSP_PIDNAMES;
+			//if (shm_scan_incoming_f(&mw_msg,&filter,1)) got_pidnames=1;
+			got_pidnames=1;
+			filter = MSP_PID;
+			if (shm_scan_incoming_f(&mw_msg,&filter,1)) {
+				got_pid=1;
+				state = 2;
+			}
+			break;
+	}
+
+	if (got_pidnames && got_pid) return 1;
+
+	return 0;
+}
+
+uint8_t mav_param_count() { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+	return msp_get_pid_count()*3; //each pid has p,i,d values
+}
+
+char *mav_get_param_name(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+	static char buf[16];
+	char *pidname;
+	pidname = msp_get_pidname(id/3);
+	switch (id%3) {
+		case 0: sprintf(buf,"%s_P",pidname); break;
+		case 1: sprintf(buf,"%s_I",pidname); break;
+		case 2: sprintf(buf,"%s_D",pidname); break;
+	}
+
+	return buf;
+}
+
+uint8_t mav_get_param_id(const char *name) {
+	//we appended 2 chars (_P, _i, _D) when reading names of params, here we need to strip them out
+	uint8_t nlen = strlen(name);
+	uint8_t reminder = 0;
+	char buf[16];
+	strncpy(buf,name,nlen-2);
+	buf[nlen-2]=0;
+
+	switch (name[nlen-1]) {
+		case 'P': reminder = 0; break;
+		case 'I': reminder = 1; break;
+		case 'D': reminder = 2; break;
+	}
+
+	//printf("Resolved param %s into %u *3 + %u\n",name,msp_get_pidid(buf),reminder);
+
+	return msp_get_pidid(buf)*3+reminder;
+}
+
+uint8_t mav_get_param_value(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+	struct S_MSP_PIDITEMS pids;
+	shm_get_incoming(&mw_msg,MSP_PID);
+	mspmsg_PID_parse(&pids,&mw_msg);	
+
+	switch (id%3) {
+		case 0: return pids.pid[id/3].P8;
+		case 1: return pids.pid[id/3].I8;
+		case 2: return pids.pid[id/3].D8;
+	}
+
+	return 0;
+}
+
+void mav_set_param(uint16_t id, uint8_t v) {
+	struct S_MSP_PIDITEMS pids;
+
+	//get current value of pids
+	shm_get_incoming(&mw_msg,MSP_PID);
+	mspmsg_PID_parse(&pids,&mw_msg);
+
+	//write new param
+	switch (id%3) {
+		case 0: pids.pid[id/3].P8 = v; break;
+		case 1: pids.pid[id/3].I8 = v; break;
+		case 2: pids.pid[id/3].D8 = v; break;
+	}
+
+	//send it to the service
+	mspmsg_SET_PID_serialize(&mw_msg,&pids);
+	shm_put_outgoing(&mw_msg);	
+}
+
+uint32_t mav_sys_status_sensors() {
+	//we take it from status message
+	uint32_t ret = 0;
+	struct S_MSP_STATUS status;
+//	struct S_MSP_BOXCONFIG boxconfig;
+	
+	shm_get_incoming(&mw_msg,MSP_STATUS);
+	mspmsg_STATUS_parse(&status,&mw_msg);
+
+/*
+	shm_get_incoming(&mw_msg,MSP_BOXIDS);
+	mspmsg_BOXIDS_parse(&boxconfig,&mw_msg);
+*/
+
+	ret = MAV_SYS_STATUS_SENSOR_3D_GYRO; //assume we always have gyro
+
+
+	if (get_bit(status.sensor,0)) ret |= (MAV_SYS_STATUS_SENSOR_3D_ACCEL | MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION);	//acc
+	//if (get_bit(status.sensors,1)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL	//baro
+	if (get_bit(status.sensor,2)) ret |= MAV_SYS_STATUS_SENSOR_3D_MAG;	//mag
+	if (get_bit(status.sensor,3)) ret |= MAV_SYS_STATUS_SENSOR_GPS; 	//gps
+	//if (get_bit(status.sensors,4)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL	//sonar
+
+	return ret;
+}
+
+uint8_t mav_state() {
+	struct S_MSP_STATUS status;
+
+	shm_get_incoming(&mw_msg,MSP_STATUS);
+	mspmsg_STATUS_parse(&status,&mw_msg);
+
+	if (mw_status) //no connection?
+		return MAV_STATE_UNINIT;
+
+	if (msp_is_armed(&status)) return MAV_STATE_ACTIVE;
+
+	return MAV_STATE_STANDBY;
+}
+
+uint8_t mav_mode_flag() {
+	struct S_MSP_STATUS status;
+
+	shm_get_incoming(&mw_msg,MSP_STATUS);
+	mspmsg_STATUS_parse(&status,&mw_msg);
+
+	uint8_t ret = 0;
+	if (msp_is_armed(&status)) ret |= (MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED);
+	if (boxconf.active[BOXHORIZON]) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
+
+	return ret;
+}
+
+uint8_t mav_type() {
+	struct S_MSP_IDENT ident;
+
+	shm_get_incoming(&mw_msg,MSP_IDENT);
+	mspmsg_IDENT_parse(&ident,&mw_msg);
+
+	switch (ident.multitype) {
+
+		case MULTITYPETRI: return MAV_TYPE_TRICOPTER;
+
+		case MULTITYPEVTAIL4: return MAV_TYPE_VTOL_QUADROTOR;
+
+		case MULTITYPEY4:
+		case MULTITYPEQUADP: 
+		case MULTITYPEQUADX: return MAV_TYPE_QUADROTOR;
+
+		case MULTITYPEY6:
+		case MULTITYPEHEX6:
+		case MULTITYPEHEX6H:
+		case MULTITYPEHEX6X: return MAV_TYPE_HEXAROTOR;
+
+		case MULTITYPEOCTOFLATP:
+		case MULTITYPEOCTOFLATX:
+		case MULTITYPEOCTOX8: return MAV_TYPE_OCTOROTOR;
+
+		case MULTITYPEGIMBAL: return MAV_TYPE_GIMBAL;
+
+		case MULTITYPEAIRPLANE:
+		case MULTITYPEFLYING_WING: return MAV_TYPE_FIXED_WING;
+
+		case MULTITYPEHELI_120_CCPM:
+		case MULTITYPEHELI_90_DEG: return MAV_TYPE_HELICOPTER;
+
+		case MULTITYPEBI:
+		case MULTITYPEDUALCOPTER: return MAV_TYPE_VTOL_DUOROTOR;
+
+		case MULTITYPESINGLECOPTER:
+		case MULTITYPENONE0:		
+		case MULTITYPENONE19:
+		default: return MAV_TYPE_GENERIC;	
+	}
+}
+
+uint16_t toggleBox(uint16_t v) {
+	return v>0?0:0xFFFF;
+}
+
+void mav_toggle_horizon() {
+	if (!boxconf.supported[BOXHORIZON]) return;
+	boxconf.active[BOXHORIZON] = toggleBox(boxconf.active[BOXHORIZON]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);
+}
+
+void mav_toggle_baro() {
+	if (!boxconf.supported[BOXBARO]) return;
+	boxconf.active[BOXBARO] = toggleBox(boxconf.active[BOXBARO]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mav_toggle_land() {
+	if (!boxconf.supported[BOXLAND]) return;
+	boxconf.active[BOXLAND] = toggleBox(boxconf.active[BOXLAND]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mav_toggle_mag() {
+	if (!boxconf.supported[BOXMAG]) return;
+	boxconf.active[BOXMAG] = toggleBox(boxconf.active[BOXMAG]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mav_toggle_pos_hold() {
+	if (!boxconf.supported[BOXGPSHOLD]) return;
+	boxconf.active[BOXGPSHOLD] = toggleBox(boxconf.active[BOXGPSHOLD]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
+void mav_toggle_pos_home() {
+	if (!boxconf.supported[BOXGPSHOME]) return;
+	boxconf.active[BOXGPSHOME] = toggleBox(boxconf.active[BOXGPSHOME]);
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);		
+}
