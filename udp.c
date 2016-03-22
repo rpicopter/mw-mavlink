@@ -73,6 +73,7 @@ uint8_t udp_recv(mavlink_message_t *msg) {
 		{
 		// Something received - print out all bytes and parse packet
 		//printf("Bytes Received: %d\nDatagram: ", (int)recsize);
+		//printf("Received packet from: %s\n",inet_ntoa(gcAddr.sin_addr));
 		for (i = 0; i < recsize; ++i)
 		{
 			temp = buf[i];

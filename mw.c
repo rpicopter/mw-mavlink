@@ -1,15 +1,26 @@
-#include "mw_mav.h"
+
+#include "mw.h"
 #include <mw/shm.h>
 #include <stdio.h>
 #include <math.h>
+
+/* This assumes you have the mavlink headers on your include path
+ or in the same folder as this source file */
+#include "mavlink/common/mavlink.h"
 
 #define MW_TIMEOUT 3 //3s timeout for mw
 static uint8_t mw_status=0; //0-all ok; 1-no connection?
 
 static struct S_MSG mw_msg;
 static struct S_MSP_BOXCONFIG boxconf;
+static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
 
-void mav_retrieve_init() {
+static uint8_t rc_timeout = 0; //
+
+void mw_keepalive();
+void mw_feed_rc();
+
+void mw_init() {
 	//this retrievs the initial set of settings from MW like boxconfiguration, etc
 	uint8_t filter;
 
@@ -76,19 +87,64 @@ void mw_keepalive() {
 	}
 }
 
-void mav_arm() {
+void mw_feed_rc() {
+	//this is run from a loop
+	if (!rc_timeout) return; //dont feed manual_control if we have not received them for a while
+	rc_timeout--;
+
+	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
+	shm_put_outgoing(&mw_msg);
+}
+
+void mw_loop() { //
+	static uint8_t counter = 0;
+
+	//mw_keepalive every second
+	if (counter%(1000/25)) mw_keepalive(); //every 1000ms but the loop_ms is 25
+
+	if (counter%1) mw_feed_rc(); //ever 25ms
+
+
+
+	counter++;
+	if (counter==100) counter=0;
+
+}
+
+void mw_arm() {
+	//TODO
 	//boxconf.active[BOXARM] = toggleBox(boxconf.active[BOXARM]);
 	//mspmsg_SET_BOX_serialize(&msg,&boxconf);
 	//shm_put_outgoing(&msg);	
 }
 
-void mav_disarm() {
-
+void mw_disarm() {
+	//TODO
 }
 
-void mav_rc(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
-	static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
+uint16_t mw_get_comm_drop_count() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
 
+	return lstatus.crc_error_count;
+}
+
+uint16_t mw_get_comm_drop_rate() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
+
+	if (!lstatus.rx_count) return 0;
+	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
+}
+
+
+void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
 	throttle-=500; //mid is 0
 
 	rc.throttle += throttle/50; //0-1000 (500 mid)
@@ -101,18 +157,17 @@ void mav_rc(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
 	rc.roll = (roll/2)+1500;
 	rc.pitch = (pitch/2)+1500;
 
-	//printf("Feeding: t: %u y: %u p: %u r: %u, o: %i\n",rc.throttle,rc.yaw,rc.pitch, rc.roll,throttle);
-	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
-	shm_put_outgoing(&mw_msg);
+	rc_timeout = 60; //1.5sec timeout for manual_control (see main loop for manual_control handling)
+
 }
 
 
-void mav_attitude_refresh() {
+void mw_attitude_refresh() {
 	mspmsg_ATTITUDE_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);
 }
 
-void mav_attitude_quaternions(float *w, float *x, float *y, float *z) {
+void mw_attitude_quaternions(float *w, float *x, float *y, float *z) {
 	struct S_MSP_ATTITUDE attitude;
 	
 	shm_get_incoming(&mw_msg,MSP_ATTITUDE);
@@ -138,12 +193,12 @@ void mav_attitude_quaternions(float *w, float *x, float *y, float *z) {
 	(*z) =c1*s2*c3 - s1*c2*s3;
 }
 
-void mav_gps_refresh() {
+void mw_gps_refresh() {
 	mspmsg_RAW_GPS_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mav_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
+void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
 	struct S_MSP_RAW_GPS gps;
 	
 	shm_get_incoming(&mw_msg,MSP_RAW_GPS);
@@ -158,30 +213,9 @@ void mav_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_
 	(*satellites_visible) = gps.num_sat;
 }
 
-uint16_t get_comm_drop_count() {
-	//this get count of errors on MW->MW_SERVICE link only
-	struct S_MSP_LOCALSTATUS lstatus;
-	
-	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
-	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
-
-	return lstatus.crc_error_count;
-}
-
-uint16_t get_comm_drop_rate() {
-	//this get count of errors on MW->MW_SERVICE link only
-	struct S_MSP_LOCALSTATUS lstatus;
-	
-	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
-	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
-
-	if (!lstatus.rx_count) return 0;
-	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
-}
-
 //re-requests pid values and names
 //if reset is set - re-request is issues
-uint8_t mav_param_refresh(uint8_t reset) {
+uint8_t mw_pid_refresh(uint8_t reset) {
 	uint8_t filter;
 	static uint8_t state = 0;
 	static uint8_t got_pid = 0;
@@ -231,11 +265,18 @@ uint8_t mav_param_refresh(uint8_t reset) {
 	return 0;
 }
 
-uint8_t mav_param_count() { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+uint8_t mw_box_count() {
+	uint8_t ret = 0, i;
+	for (i=0;i<CHECKBOXITEMS;i++)
+		if (boxconf.supported[i]) ret++;
+	return ret;
+}
+
+uint8_t mw_pid_count() { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
 	return msp_get_pid_count()*3; //each pid has p,i,d values
 }
 
-char *mav_get_param_name(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+char *mw_get_pid_name(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
 	static char buf[16];
 	char *pidname;
 	pidname = msp_get_pidname(id/3);
@@ -248,7 +289,7 @@ char *mav_get_param_name(uint8_t id) { //this should be only called once mav_par
 	return buf;
 }
 
-uint8_t mav_get_param_id(const char *name) {
+uint8_t mw_get_pid_id(const char *name) {
 	//we appended 2 chars (_P, _i, _D) when reading names of params, here we need to strip them out
 	uint8_t nlen = strlen(name);
 	uint8_t reminder = 0;
@@ -267,7 +308,7 @@ uint8_t mav_get_param_id(const char *name) {
 	return msp_get_pidid(buf)*3+reminder;
 }
 
-uint8_t mav_get_param_value(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
+uint8_t mw_get_pid_value(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
 	struct S_MSP_PIDITEMS pids;
 	shm_get_incoming(&mw_msg,MSP_PID);
 	mspmsg_PID_parse(&pids,&mw_msg);	
@@ -281,7 +322,7 @@ uint8_t mav_get_param_value(uint8_t id) { //this should be only called once mav_
 	return 0;
 }
 
-void mav_set_param(uint16_t id, uint8_t v) {
+void mw_set_pid(uint16_t id, uint8_t v) {
 	struct S_MSP_PIDITEMS pids;
 
 	//get current value of pids
@@ -300,7 +341,7 @@ void mav_set_param(uint16_t id, uint8_t v) {
 	shm_put_outgoing(&mw_msg);	
 }
 
-uint32_t mav_sys_status_sensors() {
+uint32_t mw_sys_status_sensors() {
 	//we take it from status message
 	uint32_t ret = 0;
 	struct S_MSP_STATUS status;
@@ -326,7 +367,7 @@ uint32_t mav_sys_status_sensors() {
 	return ret;
 }
 
-uint8_t mav_state() {
+uint8_t mw_state() {
 	struct S_MSP_STATUS status;
 
 	shm_get_incoming(&mw_msg,MSP_STATUS);
@@ -340,7 +381,7 @@ uint8_t mav_state() {
 	return MAV_STATE_STANDBY;
 }
 
-uint8_t mav_mode_flag() {
+uint8_t mw_mode_flag() {
 	struct S_MSP_STATUS status;
 
 	shm_get_incoming(&mw_msg,MSP_STATUS);
@@ -353,7 +394,7 @@ uint8_t mav_mode_flag() {
 	return ret;
 }
 
-uint8_t mav_type() {
+uint8_t mw_type() {
 	struct S_MSP_IDENT ident;
 
 	shm_get_incoming(&mw_msg,MSP_IDENT);
@@ -400,42 +441,42 @@ uint16_t toggleBox(uint16_t v) {
 	return v>0?0:0xFFFF;
 }
 
-void mav_toggle_horizon() {
+void mw_toggle_horizon() {
 	if (!boxconf.supported[BOXHORIZON]) return;
 	boxconf.active[BOXHORIZON] = toggleBox(boxconf.active[BOXHORIZON]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);
 }
 
-void mav_toggle_baro() {
+void mw_toggle_baro() {
 	if (!boxconf.supported[BOXBARO]) return;
 	boxconf.active[BOXBARO] = toggleBox(boxconf.active[BOXBARO]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mav_toggle_land() {
+void mw_toggle_land() {
 	if (!boxconf.supported[BOXLAND]) return;
 	boxconf.active[BOXLAND] = toggleBox(boxconf.active[BOXLAND]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mav_toggle_mag() {
+void mw_toggle_mag() {
 	if (!boxconf.supported[BOXMAG]) return;
 	boxconf.active[BOXMAG] = toggleBox(boxconf.active[BOXMAG]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mav_toggle_pos_hold() {
+void mw_toggle_pos_hold() {
 	if (!boxconf.supported[BOXGPSHOLD]) return;
 	boxconf.active[BOXGPSHOLD] = toggleBox(boxconf.active[BOXGPSHOLD]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mav_toggle_pos_home() {
+void mw_toggle_pos_home() {
 	if (!boxconf.supported[BOXGPSHOME]) return;
 	boxconf.active[BOXGPSHOME] = toggleBox(boxconf.active[BOXGPSHOME]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
