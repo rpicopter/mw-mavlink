@@ -19,6 +19,7 @@ static mavlink_message_t mav_msg;
 const uint8_t active_mav_msg[] = {
 	MAVLINK_MSG_ID_HEARTBEAT,
 	MAVLINK_MSG_ID_SYS_STATUS,
+	MAVLINK_MSG_ID_RADIO_STATUS,
 	MAVLINK_MSG_ID_GPS_RAW_INT,
 	MAVLINK_MSG_ID_ATTITUDE_QUATERNION
 };
@@ -70,6 +71,7 @@ void mavlink_loop() {
 	if (loop_counter%40==0) msg_gps_raw_int(); //every sec
 	if (loop_counter%40==0) msg_heartbeat(); //every sec
 	if (loop_counter%40==0) msg_sys_status(); //every sec
+	if (loop_counter%40==0) msg_radio_status(); //every sec
 
 	//callbacks etc
 	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
@@ -165,6 +167,20 @@ void msg_gps_raw_int() {
 	dispatch(&mav_msg);
 }
 
+void msg_radio_status() {
+	if (!is_msg_active(MAVLINK_MSG_ID_RADIO_STATUS)) return;
+
+	mavlink_msg_radio_status_pack(1,200, &mav_msg,
+		10, //rssi
+		11, //remrssi
+		8, //txbuf
+		12, //noise
+		13, //remnoise
+		99, //rxerrors
+		10 //fixed
+	);
+	dispatch(&mav_msg);
+}
 
 void msg_sys_status() {
 	if (!is_msg_active(MAVLINK_MSG_ID_SYS_STATUS)) return;

@@ -13,6 +13,8 @@ void mavlink_loop();
 
 void msg_sys_status();
 
+void msg_radio_status();
+
 void msg_heartbeat();
 
 void msg_gps_raw_int();
