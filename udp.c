@@ -24,6 +24,11 @@ static uint8_t buf[BUFFER_LENGTH];
 static int bytes_sent;
 static uint16_t len;
 
+
+void dispatch(mavlink_message_t *mavlink_msg) {
+	udp_send(mavlink_msg);
+}
+
 void udp_init(const char *target, const int target_port, const int local_port) {
 	sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 

@@ -1,12 +1,15 @@
-#ifndef _MESSAGES_H_
-#define _MESSAGES_H_
+#ifndef _MAVLINK_H_
+#define _MAVLINK_H_
 /* This assumes you have the mavlink headers on your include path
  or in the same folder as this source file */
 #include "mavlink/common/mavlink.h"
 #include "mw.h"
 #include "udp.h"
 
-void msg_loop();
+uint8_t mavlink_init();
+void mavlink_end();
+
+void mavlink_loop();
 
 void msg_sys_status();
 

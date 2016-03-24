@@ -20,7 +20,9 @@ static uint8_t rc_timeout = 0; //
 void mw_keepalive();
 void mw_feed_rc();
 
-void mw_init() {
+uint8_t mw_init() {
+ 	if (shm_client_init()) return -1; 
+
 	//this retrievs the initial set of settings from MW like boxconfiguration, etc
 	uint8_t filter;
 
@@ -59,6 +61,12 @@ void mw_init() {
 
 	mspmsg_BOX_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);	
+
+	return 0;
+}
+
+void mw_end() {
+ 	shm_client_end(); //close channel to mw-service	
 }
 
 void mw_keepalive() {
@@ -144,10 +152,14 @@ uint16_t mw_get_comm_drop_rate() {
 }
 
 
-void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
+void mw_manual_control(uint8_t mode, int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
+	//mode = 0 - relative (additive) throttle 
+	//mode = 1 - absolute throttle
+
 	throttle-=500; //mid is 0
 
-	rc.throttle += throttle/50; //0-1000 (500 mid)
+	if (mode==0) rc.throttle += throttle/50; //0-1000 (500 mid)
+	else rc.throttle = 1000+throttle; //mode = 1
 
 	if (rc.throttle>2000) rc.throttle=2000;
 	if (rc.throttle<1000) rc.throttle=1000;
@@ -265,11 +277,23 @@ uint8_t mw_pid_refresh(uint8_t reset) {
 	return 0;
 }
 
-uint8_t mw_box_count() {
-	uint8_t ret = 0, i;
-	for (i=0;i<CHECKBOXITEMS;i++)
-		if (boxconf.supported[i]) ret++;
+uint8_t mw_box_count() { //gets number of supported boxes
+	return msp_get_box_count();
+}
+
+char *mw_get_box_name(uint8_t id) { //gets name of box based on id (for supported boxes only)
+	return msp_get_boxname(id);
+}
+
+uint8_t mw_get_box_id(const char *name) {
+	uint8_t ret;
+	ret = msp_get_boxid(name);
+	if (ret==UINT8_MAX) return UINT8_MAX;
 	return ret;
+}
+
+uint8_t mw_box_is_supported(uint8_t id) {
+	return boxconf.supported[id];
 }
 
 uint8_t mw_pid_count() { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
@@ -291,6 +315,8 @@ char *mw_get_pid_name(uint8_t id) { //this should be only called once mav_param_
 
 uint8_t mw_get_pid_id(const char *name) {
 	//we appended 2 chars (_P, _i, _D) when reading names of params, here we need to strip them out
+	uint8_t ret = 0;
+
 	uint8_t nlen = strlen(name);
 	uint8_t reminder = 0;
 	char buf[16];
@@ -304,8 +330,9 @@ uint8_t mw_get_pid_id(const char *name) {
 	}
 
 	//printf("Resolved param %s into %u *3 + %u\n",name,msp_get_pidid(buf),reminder);
-
-	return msp_get_pidid(buf)*3+reminder;
+	ret = msp_get_pidid(buf);
+	if (ret==UINT8_MAX) return UINT8_MAX;
+	return ret*3+reminder;
 }
 
 uint8_t mw_get_pid_value(uint8_t id) { //this should be only called once mav_param_refresh returns 1 to ensure it is up to date
@@ -441,44 +468,12 @@ uint16_t toggleBox(uint16_t v) {
 	return v>0?0:0xFFFF;
 }
 
-void mw_toggle_horizon() {
-	if (!boxconf.supported[BOXHORIZON]) return;
-	boxconf.active[BOXHORIZON] = toggleBox(boxconf.active[BOXHORIZON]);
-	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
-	shm_put_outgoing(&mw_msg);
-}
-
-void mw_toggle_baro() {
-	if (!boxconf.supported[BOXBARO]) return;
-	boxconf.active[BOXBARO] = toggleBox(boxconf.active[BOXBARO]);
+void mw_toggle_box(uint8_t i) {
+	if (!boxconf.supported[i]) {
+		printf("BOX %u not supported\n",i);
+		return;
+	}
+	boxconf.active[i] = toggleBox(boxconf.active[i]);
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
-}
-
-void mw_toggle_land() {
-	if (!boxconf.supported[BOXLAND]) return;
-	boxconf.active[BOXLAND] = toggleBox(boxconf.active[BOXLAND]);
-	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
-	shm_put_outgoing(&mw_msg);	
-}
-
-void mw_toggle_mag() {
-	if (!boxconf.supported[BOXMAG]) return;
-	boxconf.active[BOXMAG] = toggleBox(boxconf.active[BOXMAG]);
-	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
-	shm_put_outgoing(&mw_msg);	
-}
-
-void mw_toggle_pos_hold() {
-	if (!boxconf.supported[BOXGPSHOLD]) return;
-	boxconf.active[BOXGPSHOLD] = toggleBox(boxconf.active[BOXGPSHOLD]);
-	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
-	shm_put_outgoing(&mw_msg);	
-}
-
-void mw_toggle_pos_home() {
-	if (!boxconf.supported[BOXGPSHOME]) return;
-	boxconf.active[BOXGPSHOME] = toggleBox(boxconf.active[BOXGPSHOME]);
-	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
-	shm_put_outgoing(&mw_msg);		
 }

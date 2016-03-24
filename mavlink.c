@@ -1,183 +1,242 @@
-
+#include "mavlink.h"
+#include "def.h"
+#include "global.h"
+#include "params.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
-#include <string.h>
-#include <time.h>
-#include <sys/types.h>
-#include <signal.h>
 
-#include <mw/shm.h>
-#include "mw.h"
-#include "udp.h"
-#include "messages.h"
-#include "def.h"
+static uint8_t debug = 0;
 
-uint8_t debug = 1;
+static uint8_t loop_counter = 0;
 
-uint8_t stop = 0;
-uint16_t loop_counter = 0;
-
-typedef void (*t_cb)();
-
-struct _S_TASK {
-	uint16_t freq; //has to be less than loop_counter max value
-	t_cb cb_fn;
-};
-
-typedef struct _S_TASK S_TASK;
-
-void check_incoming_udp(); //checks for messages on UDP port
-
-#define MAX_TASK 3
-S_TASK task[MAX_TASK] = {
-	{1, check_incoming_udp},
-	{1, mw_loop},
-	{1, msg_loop}
-};
+typedef uint8_t (*t_cb)(uint8_t);
+t_cb loop_callback; //we use loop_callback to send certain messages with a delay
 
 static mavlink_message_t mav_msg;
 
-void mssleep(unsigned int ms);
 
+//defines list of active messages
+const uint8_t active_mav_msg[] = {
+	MAVLINK_MSG_ID_HEARTBEAT,
+	MAVLINK_MSG_ID_SYS_STATUS,
+	MAVLINK_MSG_ID_GPS_RAW_INT,
+	MAVLINK_MSG_ID_ATTITUDE_QUATERNION
+};
 
-void check_incoming_udp() {
+static uint8_t is_msg_active(uint8_t msg_id) {
+	uint8_t i;
+	for (i=0;i<sizeof(active_mav_msg);i++)
+		if (active_mav_msg[i] == msg_id) return 1;
 
-	while (udp_recv(&mav_msg)) {
-		if (debug) printf("<- MsgID: %u\n",mav_msg.msgid);
-		switch (mav_msg.msgid) {
-			case MAVLINK_MSG_ID_HEARTBEAT: break;
-
-			case MAVLINK_MSG_ID_PARAM_REQUEST_LIST:
-				msg_param_request_list(&mav_msg);
-				break;
-			case MAVLINK_MSG_ID_PARAM_REQUEST_READ:
-				msg_param_request_read(&mav_msg);
-				break;
-			case MAVLINK_MSG_ID_PARAM_SET:
-				msg_param_set(&mav_msg);
-				break;				
-			case MAVLINK_MSG_ID_MISSION_REQUEST_LIST:
-				msg_mission_request_list(&mav_msg);
-				break;
-			case MAVLINK_MSG_ID_COMMAND_LONG:
-				msg_command_long(&mav_msg);
-				break;	
-			case MAVLINK_MSG_ID_MANUAL_CONTROL:
-				msg_manual_control(&mav_msg);
-				break;			
-			default: printf("Unknown message id: %u\n",mav_msg.msgid);
-		}
-		//process message
-	}
+	return 0;
 }
 
+uint64_t microsSinceEpoch()
+{
+ 
+	struct timeval tv;
+ 
+	uint64_t micros = 0;
+ 
+	gettimeofday(&tv, NULL);  
+	micros =  ((uint64_t)tv.tv_sec) * 1000000 + tv.tv_usec;
+ 
+	return micros;
+}
 
-
-void mssleep(unsigned int ms) {
-  struct timespec tim;
-   tim.tv_sec = ms/1000;
-   tim.tv_nsec = 1000000L * (ms % 1000);
-   if(nanosleep(&tim , &tim) < 0 )
+void printBits(unsigned int num)
+{
+		int bit;
+   for(bit=0;bit<(sizeof(unsigned int) * 8); bit++)
    {
-      printf("Nano sleep system call failed \n");
+      printf("%i ", num & 0x01);
+      num = num >> 1;
    }
 }
 
+uint8_t mavlink_init() {
+	params_init();
+	return 0;
+}
 
-//runs all tasks as per defined frequency
-void loop() {
-	uint8_t i;
-	loop_counter=0;
+void mavlink_end() {
+	params_end();
+}
 
-	static int test = 20;
-	while (!stop) {
+void mavlink_loop() {
 
-		for (i=0;i<MAX_TASK;i++)
-			if (loop_counter%task[i].freq==0) {
-				if (test) {
-					printf("Running task %u\n",i);
-					test--;
-				}
-				task[i].cb_fn();
-			}
+	//send default messages
+	if (loop_counter%4==0) msg_attitude_quaternion();  //every 100ms
+	if (loop_counter%40==0) msg_gps_raw_int(); //every sec
+	if (loop_counter%40==0) msg_heartbeat(); //every sec
+	if (loop_counter%40==0) msg_sys_status(); //every sec
 
-		mssleep(LOOP_MS);
-		loop_counter++;
-		if (loop_counter==1000) loop_counter=0;
+	//callbacks etc
+	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
+
+	loop_counter++;
+	if (loop_counter==100) loop_counter=0;
+}
+
+void mav_cmd_arm_disarm(mavlink_message_t *msg) {
+	//arm disarm via box
+	float p = mavlink_msg_command_long_get_param1(msg);
+
+	if (p==1.f) mw_arm();
+	else mw_disarm();
+}
+
+void msg_command_long(mavlink_message_t *msg) {
+	uint16_t cmd;
+	cmd = mavlink_msg_command_long_get_command(msg);
+
+	switch (cmd) {
+		case MAV_CMD_COMPONENT_ARM_DISARM:
+			mav_cmd_arm_disarm(msg);
+			break;
+		default: printf("Unknown mav_cmd: %u\n",cmd);
 	}
+	printf("mav_cmd: %u\n",cmd);
 }
 
-char target_ip[64];
-int target_port=14550, local_port;
+void msg_param_set(mavlink_message_t *msg) {
+	//it takes 2 set messages to set it
+	//on the first set we send a set message to mw and request a refresh
+	//on the second set - we just check if the value was refreshed to the value that is being set
+	//firstly check if the value we have is different
 
-void print_usage() {
-    printf("Usage:\n");
-	printf("-h\thelp\n");
-    printf("-t TARGET\tip address of QGroundControl\n");
-    printf("-p PORT\tQGroundControl port to use (default: %i)\n",target_port);
-    printf("-l PORT\tlocal port to use\n");
+	uint8_t component;
+	char name[16+1];
+	float value;
+
+	component = mavlink_msg_param_set_get_target_component(msg);
+	mavlink_msg_param_set_get_param_id(msg,name); //get pid name from the message
+	value = mavlink_msg_param_set_get_param_value(msg);
+
+	printf("Set id: %s\n",name);
+
+	params_set(component,name,value);
 }
 
-int set_defaults(int c, char **a) {
-	int required = 2;
-    int option;
-    while ((option = getopt(c, a,"ht:p:l:")) != -1) {
-        switch (option)  {
-            case 't': strcpy(target_ip,optarg); required--; break;
-            case 'p': target_port = atoi(optarg); break;
-            case 'l': local_port = atoi(optarg); required--; break;
-            default: print_usage(); return -1;
-        }
-    }
-   	
-   	if (required) {
-   		print_usage();
-   		return -1;
-   	}
+void msg_param_request_read(mavlink_message_t *msg) {
+	int16_t idx;
+	uint8_t component;
+	component = mavlink_msg_param_request_read_get_target_component(msg);
+	idx = mavlink_msg_param_request_read_get_param_index(msg);
 
-   	return 0;
+	params_send(component,idx);
 }
 
-void catch_signal(int sig)
-{
-        stop = 1;
+void msg_param_request_list(mavlink_message_t *msg) {
+	loop_callback = params_list_loop;
+	params_list_loop(1);
 }
 
-int main(int argc, char* argv[])
-{
+uint8_t msg_mission_request_list(mavlink_message_t *msg) {
+	if (debug) printf("-> mission_count\n");
+	mavlink_msg_mission_count_pack(1,200,&mav_msg,1,200,0);
 
-	signal(SIGTERM, catch_signal);
-    signal(SIGINT, catch_signal);
+	dispatch(&mav_msg);
 
-    dbg_init(0); //0b11111111 
-
-    if (set_defaults(argc,argv)) {
-    	return -1;
-    }
-
-    if (debug) printf("Initializing UDP...\n");
- 	udp_init(target_ip,target_port,local_port);
-
- 	if (debug) printf("Running shm_client_init...\n");
- 	if (shm_client_init()) {//initiate channel to mw-service
- 		printf("Error!\n");
- 		return -1; 
- 	}
-
- 	if (debug) printf("Retrieveing initial settings...\n");
- 	mw_init();
-
- 	if (debug) printf("Started.\n");
- 	loop();
-
- 	if (debug) printf("Cleaning up...\n");
- 	shm_client_end(); //close channel to mw-service
-
- 	udp_close();
-
- 	if (debug) printf("Bye.\n");
- 	return 0;
+	return 0;
 }
- 
+
+void msg_gps_raw_int() {
+	if (!is_msg_active(MAVLINK_MSG_ID_GPS_RAW_INT)) return;
+	uint8_t fix = 0;
+	int32_t lat = 0;
+	int32_t lon = 0;
+	int32_t alt = 0;
+	uint16_t eph = UINT16_MAX;
+	uint16_t epv = UINT16_MAX;
+	uint16_t vel = 0;
+	uint16_t cog = 0;
+	uint8_t satellites_visible = 0;
+
+	mw_gps_refresh();
+
+	mw_raw_gps(&fix, &lat, &lon, &alt, &vel, &cog, &satellites_visible);
+
+	mavlink_msg_gps_raw_int_pack(1,200, &mav_msg,
+		microsSinceEpoch(),
+		fix,lat,lon, alt, eph, epv, vel, cog, satellites_visible
+	);
+
+	dispatch(&mav_msg);
+}
+
+
+void msg_sys_status() {
+	if (!is_msg_active(MAVLINK_MSG_ID_SYS_STATUS)) return;
+	mavlink_msg_sys_status_pack(1, 200, &mav_msg,
+		mw_sys_status_sensors(), //present sensors
+		mw_sys_status_sensors(), //active sensors (assume all present are active for MW) //could use 0xFFFFFFFF ?
+		mw_sys_status_sensors(), //error sensors (assume all are ok for MW) //could use 0xFFFFFFFF ?
+		500, //load 50%
+		11000, //voltage 11V
+		-1, //current
+		-1, //remaining
+		mw_get_comm_drop_rate(), //drop rate
+		mw_get_comm_drop_count(), //comm error count
+		0, 
+		0, 
+		0, 
+		0
+	);
+	dispatch(&mav_msg);	
+}
+
+void msg_heartbeat() {
+	if (!is_msg_active(MAVLINK_MSG_ID_HEARTBEAT)) return;
+	mavlink_msg_heartbeat_pack(1, 200, &mav_msg, 
+		mw_type(),
+		MAV_AUTOPILOT_GENERIC,
+		mw_mode_flag(),
+		0,
+		mw_state()
+	);
+	dispatch(&mav_msg);
+}
+
+void msg_attitude_quaternion() {
+	if (!is_msg_active(MAVLINK_MSG_ID_ATTITUDE_QUATERNION)) return;
+	float w,x,y,z;
+	mw_attitude_refresh();
+
+	mw_attitude_quaternions(&w, &x, &y, &z);
+
+	mavlink_msg_attitude_quaternion_pack(1,200, &mav_msg,
+		microsSinceEpoch(),
+		w, x, y, z, 0.f, 0.f,0.f
+	);
+
+	dispatch(&mav_msg);
+}
+
+void msg_manual_control(mavlink_message_t *msg) {
+	static uint16_t old_btn = 0;
+	uint16_t btn;
+	uint16_t i;
+	uint8_t btn_mapping;
+
+	mw_manual_control(params_manual_control_mode_get_value(),
+		mavlink_msg_manual_control_get_z(msg), 
+		mavlink_msg_manual_control_get_r(msg), 
+		mavlink_msg_manual_control_get_x(msg), 
+		mavlink_msg_manual_control_get_y(msg)
+	);
+
+	btn=mavlink_msg_manual_control_get_buttons(msg);
+
+	if (btn==old_btn) return;
+
+	for (i=0;i<mw_box_count();i++) {
+		btn_mapping = params_manual_control_mapping_get_value(i);
+		if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { mw_toggle_box(i); } //r1
+	}
+
+	old_btn = btn;
+}
+
+
 
