@@ -15,7 +15,7 @@ static struct S_MSG mw_msg;
 static struct S_MSP_BOXCONFIG boxconf;
 static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
 
-static uint8_t rc_timeout = 0; //
+static uint8_t rc_timeout; //
 
 void mw_keepalive();
 void mw_feed_rc();
@@ -26,6 +26,7 @@ uint8_t mw_init() {
 	//this retrievs the initial set of settings from MW like boxconfiguration, etc
 	uint8_t filter;
 
+	rc_timeout = 0;
 	//ident
 	filter = MSP_IDENT;
 	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
@@ -97,7 +98,7 @@ void mw_keepalive() {
 
 void mw_feed_rc() {
 	//this is run from a loop
-	if (!rc_timeout) return; //dont feed manual_control if we have not received them for a while
+	if (rc_timeout==0) return; //dont feed manual_control if we have not received them for a while
 	rc_timeout--;
 
 	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
@@ -108,9 +109,9 @@ void mw_loop() { //
 	static uint8_t counter = 0;
 
 	//mw_keepalive every second
-	if (counter%(1000/25)) mw_keepalive(); //every 1000ms but the loop_ms is 25
+	if (counter%(1000/25)==0) mw_keepalive(); //every 1000ms but the loop_ms is 25
 
-	if (counter%1) mw_feed_rc(); //ever 25ms
+	if (counter%1==0) mw_feed_rc(); //ever 25ms
 
 
 

@@ -71,6 +71,7 @@ uint8_t udp_recv(mavlink_message_t *msg) {
 	static int i = 0;
 	static unsigned int temp = 0;
 	static mavlink_status_t status;
+	//struct sockaddr_in gcAddr;
 
 	memset(buf, 0, BUFFER_LENGTH);
 	recsize = recvfrom(sock, (void *)buf, BUFFER_LENGTH, 0, (struct sockaddr *)&gcAddr, &fromlen);
