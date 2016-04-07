@@ -7,16 +7,13 @@
 
 
 void params_init();
+
 void params_end();
 
-uint8_t params_list_loop(uint8_t reset);
+uint8_t params_get_all(uint8_t reset);
 
 void params_send(uint8_t component, uint8_t idx);
 
 void params_set(uint8_t component, char *name, float value);
-
-uint8_t params_manual_control_mapping_get_value(uint8_t idx);
-
-uint8_t params_manual_control_mode_get_value();
 
 #endif

@@ -18,7 +18,7 @@ void mw_end();
 void mw_arm();
 void mw_disarm();
 
-void mw_manual_control(uint8_t mode, int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll);
+void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll);
 
 void mw_attitude_refresh();
 void mw_attitude_quaternions(float *w, float *x, float *y, float *z);
@@ -36,7 +36,7 @@ uint8_t mw_pid_count();
 char *mw_get_pid_name(uint8_t id);
 uint8_t mw_get_pid_id(const char *name);
 uint8_t mw_get_pid_value(uint8_t id);
-void mw_set_pid(uint16_t id, uint8_t v);
+void mw_set_pid(uint8_t id, uint8_t v);
 
 
 uint16_t mw_get_comm_drop_count();

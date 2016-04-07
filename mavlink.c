@@ -4,6 +4,8 @@
 #include "params.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include "gamepad.h"
+#include <sys/time.h>
 
 static uint8_t debug = 0;
 
@@ -130,8 +132,8 @@ void msg_param_request_read(mavlink_message_t *msg) {
 }
 
 void msg_param_request_list(mavlink_message_t *msg) {
-	loop_callback = params_list_loop;
-	params_list_loop(1);
+	loop_callback = params_get_all;
+	params_get_all(1);
 }
 
 uint8_t msg_mission_request_list(mavlink_message_t *msg) {
@@ -235,23 +237,34 @@ void msg_manual_control(mavlink_message_t *msg) {
 	uint16_t i;
 	uint8_t btn_mapping;
 
-	mw_manual_control(params_manual_control_mode_get_value(),
-		mavlink_msg_manual_control_get_z(msg), 
-		mavlink_msg_manual_control_get_r(msg), 
-		mavlink_msg_manual_control_get_x(msg), 
-		mavlink_msg_manual_control_get_y(msg)
-	);
+	int16_t t,y,p,r;
+
+	t = mavlink_msg_manual_control_get_z(msg);
+	y = mavlink_msg_manual_control_get_r(msg);
+	p = mavlink_msg_manual_control_get_x(msg);
+	r = mavlink_msg_manual_control_get_y(msg);
 
 	btn=mavlink_msg_manual_control_get_buttons(msg);
 
-	if (btn==old_btn) return;
+	if (btn!=old_btn) {
 
-	for (i=0;i<mw_box_count();i++) {
-		btn_mapping = params_manual_control_mapping_get_value(i);
-		if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { mw_toggle_box(i); } //r1
+		for (i=0;i<mw_box_count();i++) { //check for box buttons
+			btn_mapping = gamepad_get_mapping(i);
+			if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { mw_toggle_box(i); }
+		}
+
+		//check for throttle low button
+		btn_mapping = gamepad_get_mapping(i);
+
+		if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { gamepad_control_reset_throttle(); } 	
+
+		old_btn = btn;
 	}
 
-	old_btn = btn;
+	gamepad_control_calculate(&t,&y,&p,&r);
+
+	mw_manual_control(t,y,p,r);
+
 }
 
 

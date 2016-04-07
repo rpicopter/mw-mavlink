@@ -96,10 +96,13 @@ void mw_keepalive() {
 	}
 }
 
+
 void mw_feed_rc() {
 	//this is run from a loop
 	if (rc_timeout==0) return; //dont feed manual_control if we have not received them for a while
 	rc_timeout--;
+
+	//printf("Throttle: %i\n",rc.throttle);
 
 	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
 	shm_put_outgoing(&mw_msg);
@@ -152,23 +155,12 @@ uint16_t mw_get_comm_drop_rate() {
 	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
 }
 
+void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
 
-void mw_manual_control(uint8_t mode, int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
-	//mode = 0 - relative (additive) throttle 
-	//mode = 1 - absolute throttle
-
-	throttle-=500; //mid is 0
-
-	if (mode==0) rc.throttle += throttle/50; //0-1000 (500 mid)
-	else rc.throttle = 1000+throttle; //mode = 1
-
-	if (rc.throttle>2000) rc.throttle=2000;
-	if (rc.throttle<1000) rc.throttle=1000;
-
-	//translate between -1000 1000 and mw pwm (1000,2000)
-	rc.yaw = (yaw/2)+1500;
-	rc.roll = (roll/2)+1500;
-	rc.pitch = (pitch/2)+1500;
+	rc.throttle = throttle;
+	rc.yaw = yaw;
+	rc.roll = roll;
+	rc.pitch = pitch;
 
 	rc_timeout = 60; //1.5sec timeout for manual_control (see main loop for manual_control handling)
 
@@ -350,7 +342,7 @@ uint8_t mw_get_pid_value(uint8_t id) { //this should be only called once mav_par
 	return 0;
 }
 
-void mw_set_pid(uint16_t id, uint8_t v) {
+void mw_set_pid(uint8_t id, uint8_t v) {
 	struct S_MSP_PIDITEMS pids;
 
 	//get current value of pids
@@ -366,7 +358,9 @@ void mw_set_pid(uint16_t id, uint8_t v) {
 
 	//send it to the service
 	mspmsg_SET_PID_serialize(&mw_msg,&pids);
-	shm_put_outgoing(&mw_msg);	
+	shm_put_outgoing(&mw_msg);
+
+	mw_pid_refresh(1);
 }
 
 uint32_t mw_sys_status_sensors() {

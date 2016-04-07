@@ -14,12 +14,6 @@
 #include "def.h"
 #include "global.h"
 
-#ifdef CFG_ENABLED
-	#include <sys/stat.h> 
-	#include <fcntl.h>
-	#define CFG_FILE "/etc/mw-mavlink.cfg"
-	config_t cfg;
-#endif
 
 uint8_t debug = 1;
 
@@ -152,7 +146,6 @@ void catch_signal(int sig)
 
 int main(int argc, char* argv[])
 {
-	int ret;
 	signal(SIGTERM, catch_signal);
     signal(SIGINT, catch_signal);
 
@@ -161,28 +154,6 @@ int main(int argc, char* argv[])
     if (set_defaults(argc,argv)) {
     	return -1;
     }
-
-#ifdef CFG_ENABLED
-	printf("Opening config: %s...\n",CFG_FILE);
-
-	if (access(CFG_FILE,F_OK)) {
-		printf("Not found. Creating...\n");
-		ret = creat(CFG_FILE, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-		if (ret>0) {
-			printf("Success.\n");
-			close(ret);
-		}
-	}
-
-  	if(!config_read_file(&cfg, CFG_FILE))
-  	{
-  		printf("Unable to open.\n");
-    	fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
-            config_error_line(&cfg), config_error_text(&cfg));
-    		config_destroy(&cfg);
-    	return(EXIT_FAILURE);
-  	}	
-#endif
 
     printf("Initializing UDP...\n");
  	udp_init(target_ip,target_port,local_port);
@@ -207,12 +178,6 @@ int main(int argc, char* argv[])
  	mw_end();
 
  	udp_close();
-
-#ifdef CFG_ENABLED
- 	if (!config_write_file(&cfg,CFG_FILE)) 
- 		printf("Error while writing config file. Settings won't be stored.\n");
- 	config_destroy(&cfg);
-#endif 	
 
  	printf("Bye.\n");
  	return 0;
