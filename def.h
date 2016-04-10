@@ -7,4 +7,3 @@
 #define PACKAGE_URL ""
 #define PACKAGE "mw-mavlink"
 #define VERSION "0.0.1"
-#define CFG_ENABLED 1

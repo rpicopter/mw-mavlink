@@ -172,14 +172,15 @@ void msg_gps_raw_int() {
 void msg_radio_status() {
 	if (!is_msg_active(MAVLINK_MSG_ID_RADIO_STATUS)) return;
 
+	//printf("RSTATUS\n");
 	mavlink_msg_radio_status_pack(1,200, &mav_msg,
-		10, //rssi
-		11, //remrssi
-		8, //txbuf
-		12, //noise
-		13, //remnoise
-		99, //rxerrors
-		10 //fixed
+		-50-127, //rssi
+		-50-127, //remrssi
+		1, //txbuf
+		-71-127, //noise
+		-71-127, //remnoise
+		0, //rxerrors
+		1 //fixed
 	);
 	dispatch(&mav_msg);
 }

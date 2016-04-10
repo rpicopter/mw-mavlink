@@ -4,3 +4,5 @@ mw_mavlink_CFLAGS = -Wall
 mw_mavlink_LDFLAGS = 
 mw_mavlink_LDADD = -lmw_core -lrt -lpthread -lssl -lcrypto -lresolv -lm $(libconfig_LIBS)
 
+mwconfdir=$(sysconfdir)/mw 
+mwconf_DATA = utils/mw-mavlink.start 
