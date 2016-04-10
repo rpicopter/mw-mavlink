@@ -3,6 +3,8 @@
 
 #include "def.h"
 
+#define CFG_FILE "/usr/local/etc/mw/mw-mavlink.cfg"
+
 void mssleep(unsigned int ms);
 
 #ifdef CFG_ENABLED

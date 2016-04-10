@@ -19,7 +19,6 @@
 #ifdef CFG_ENABLED
 	#include <sys/stat.h> 
 	#include <fcntl.h>
-	#define CFG_FILE "/etc/mw-mavlink.cfg"
 	config_t cfg;
 #endif
 
