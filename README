@@ -9,6 +9,7 @@ MultiWii MAVLINK service that makes MultiWii mavlink capable (see QGroundControl
 Requirements
 ==============
 - mw-service
+- mw-config (for autostart)
 - build tools (autotools, libtool, automake)
 
 Installation
@@ -18,5 +19,5 @@ Installation
 
 Running & Testing
 ==============
-- run mw-mavlink
+- run mw-mavlink (this will be started automatically if using mw-config)
 - run QGroundControl and setup commlink to the IP of your quadcopter
