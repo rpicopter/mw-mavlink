@@ -1,1 +1,22 @@
-Example from http://qgroundcontrol.org/dev/mavlink_linux_integration_tutorial
+MultiWii MAVLINK
+
+For general information about this project see: https://raw.githubusercontent.com/rpicopter/mw-config/master/README
+
+mw-mavlink
+===========
+MultiWii MAVLINK service that makes MultiWii mavlink capable (see QGroundControl for more info http://qgroundcontrol.io)
+
+Requirements
+==============
+- mw-service
+- build tools (autotools, libtool, automake)
+
+Installation
+==============
+- ./autogen.sh
+- make & sudo make install
+
+Running & Testing
+==============
+- run mw-mavlink
+- run QGroundControl and setup commlink to the IP of your quadcopter
