@@ -363,6 +363,16 @@ void mw_set_pid(uint8_t id, uint8_t v) {
 	mw_pid_refresh(1);
 }
 
+void mw_get_signal(int8_t *rssi, int8_t *noise) {
+	struct S_MSP_LOCALSTATUS t;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&t,&mw_msg);	
+
+	(*rssi) = t.rssi;
+	(*noise) = t.noise;	
+}
+
 uint32_t mw_sys_status_sensors() {
 	//we take it from status message
 	uint32_t ret = 0;

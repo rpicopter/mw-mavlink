@@ -38,6 +38,7 @@ uint8_t mw_get_pid_id(const char *name);
 uint8_t mw_get_pid_value(uint8_t id);
 void mw_set_pid(uint8_t id, uint8_t v);
 
+void mw_get_signal(int8_t *rssi, int8_t *noise);
 
 uint16_t mw_get_comm_drop_count();
 uint16_t mw_get_comm_drop_rate();
