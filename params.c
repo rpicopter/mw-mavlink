@@ -358,6 +358,7 @@ void params_init() {
 	offset += 1;
 #endif
 
+	gamepad_init();
 	params_cfg_open();
 	params_cfg_load();
 }

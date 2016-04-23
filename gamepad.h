@@ -6,6 +6,8 @@
 #include <stdlib.h>
 
 
+void gamepad_init();
+
 void gamepad_set_mode(uint8_t i, uint8_t mode);
 uint8_t gamepad_get_mode(uint8_t i);
 

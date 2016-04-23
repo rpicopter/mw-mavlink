@@ -9,6 +9,12 @@ static uint8_t threshold[3]; //yaw, pitch, roll
 */
 static uint8_t mode; 
 
+void gamepad_init() {
+	uint8_t i;
+	for (i=0;i<CHECKBOXITEMS+1;i++)
+		mapping[i] = UINT8_MAX;
+}
+
 void gamepad_set_mode(uint8_t i, uint8_t _mode) {
 	mode = _mode;	
 }
