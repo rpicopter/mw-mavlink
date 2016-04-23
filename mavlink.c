@@ -8,8 +8,9 @@
 #include <sys/time.h>
 
 static uint8_t debug = 0;
-
+static uint8_t failsafe = 0; //will be set if mavlink cannot recover the vehicle, this will stop any manual control
 static uint8_t loop_counter = 0;
+static uint8_t mav_status_override = 0;
 
 typedef uint8_t (*t_cb)(uint8_t);
 t_cb loop_callback; //we use loop_callback to send certain messages with a delay
@@ -66,6 +67,44 @@ void mavlink_end() {
 	params_end();
 }
 
+void check_emergency() {
+	static uint8_t emergency_active = 0;
+	static uint8_t count = 0;
+
+	if (mw_state()==MAV_STATE_UNINIT) return; //no connection to MW board, cannot do anything
+	if (mw_state()==MAV_STATE_STANDBY) { //reset emergency and counter if unarmed
+		emergency_active = 0;
+		count = 0;
+		return;
+	}
+
+	if ( (emergency_active==0) && (mw_state()==MAV_STATE_ACTIVE) && (!heartbeat)) { //initiate emergency
+		mav_status_override = MAV_STATE_EMERGENCY;
+		emergency_active = 1;
+		count++;
+
+		printf("Emergency! heartbeat: %i, count: %u\n",heartbeat,count);
+
+		if (failsafe_rth()) {
+			if (debug) printf("activating rth\n");
+			mw_rth_start();
+		}
+#ifdef RPICAM_ENABLED
+		rpicam_emergency(); //switch to lower resolution if needed and record
+#endif
+
+		if (count>2) {//we have recovered and again fall into emergency, activate MW failsafe
+			failsafe = 1;
+			mav_status_override = MAV_STATE_POWEROFF;
+		}
+
+	}
+	else if (heartbeat) { 
+		mav_status_override = 0;
+		emergency_active = 0;
+	}
+}
+
 void mavlink_loop() {
 
 	//send default messages
@@ -74,6 +113,7 @@ void mavlink_loop() {
 	if (loop_counter%40==0) msg_heartbeat(); //every sec
 	if (loop_counter%40==0) msg_sys_status(); //every sec
 	if (loop_counter%40==0) msg_radio_status(); //every sec
+	if (loop_counter%40==0) check_emergency(); //every sec
 
 	//callbacks etc
 	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
@@ -211,12 +251,14 @@ void msg_sys_status() {
 
 void msg_heartbeat() {
 	if (!is_msg_active(MAVLINK_MSG_ID_HEARTBEAT)) return;
+
+	uint8_t state = mav_status_override?mav_status_override:mw_state();
 	mavlink_msg_heartbeat_pack(1, 200, &mav_msg, 
 		mw_type(),
 		MAV_AUTOPILOT_GENERIC,
 		mw_mode_flag(),
 		0,
-		mw_state()
+		state
 	);
 	dispatch(&mav_msg);
 }
@@ -238,6 +280,8 @@ void msg_attitude_quaternion() {
 
 void msg_manual_control(mavlink_message_t *msg) {
 	static uint16_t old_btn = 0;
+	if (failsafe) return;
+
 	uint16_t btn;
 	uint16_t i;
 	uint8_t btn_mapping;

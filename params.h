@@ -16,4 +16,7 @@ void params_send(uint8_t component, uint8_t idx);
 
 void params_set(uint8_t component, char *name, float value);
 
+uint8_t failsafe_rth();
+void rpicam_emergency();
+
 #endif

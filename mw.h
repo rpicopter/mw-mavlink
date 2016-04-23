@@ -48,6 +48,9 @@ uint8_t mw_type();
 uint8_t mw_mode_flag();
 uint8_t mw_state();
 
+void mw_rth_start();
 void mw_toggle_box(uint8_t i);
+void mw_box_activate(uint8_t i);
+void mw_box_deactivate(uint8_t i);
 
 #endif

@@ -7,10 +7,14 @@
 
 void mssleep(unsigned int ms);
 
+extern uint16_t heartbeat;
+
 #ifdef CFG_ENABLED
 #include <libconfig.h>
 extern config_t cfg;
 #endif
+
+#define RPICAM_ENABLED 1
 
 #define LOOP_MS 25
 

@@ -51,6 +51,108 @@ static void _set_value(uint8_t idx, uint8_t v) {
 	param[idx].set_value(param[idx].internal_idx,v);
 }
 
+
+/* ============== RPI CAMERA HANDLING ========== */
+#ifdef RPICAM_ENABLED
+
+#include "udp.h"
+
+uint8_t rpicam_debug = 1;
+#define CAM_CMD "/usr/local/bin/camera_streamer.sh"
+char rpicmd[256];
+uint8_t rpicam_mode = 0;
+uint8_t rpicam_on = 0;
+
+void rpicam_stop() {
+	if (!rpicam_on) return;
+	int ret;
+	memset(rpicmd, '\0', 256);
+	sprintf(rpicmd, "%s stop",CAM_CMD);
+	if (rpicam_debug) printf("Executing: %s\n",rpicmd);
+	ret = system(rpicmd);
+	if (ret==0) rpicam_on = 0;
+	if (rpicam_debug) printf("Stoping camera_streamer returned: %i\n",ret);	
+}
+
+void rpicam_start(uint8_t type) {
+	if (rpicam_on) {
+		if (rpicam_debug) printf("Camera is already streaming. Stopping.\n");
+		rpicam_stop();
+		//return;
+	}
+	int ret;
+	memset(rpicmd, '\0', 256);
+	sprintf(rpicmd, "%s start %s %i %i",CAM_CMD, get_gc_ip(),5600,type);
+	if (rpicam_debug) printf("Executing: %s\n",rpicmd);
+	ret=system(rpicmd);
+
+	if (ret==0) rpicam_on = 1;
+
+	if (rpicam_debug) printf("Starting camera_streamer %i returned: %i\n",type,ret);
+}
+
+void rpicam_emergency() {
+	if (!rpicam_on) return;
+	rpicam_stop();
+	rpicam_start(11);
+}
+
+void rpicam_set(uint8_t i, uint8_t _value) {
+	rpicam_mode = _value;
+
+	if (_value==0) rpicam_stop();
+	else rpicam_start(_value);
+}
+
+uint8_t rpicam_get(uint8_t i) {
+	return rpicam_mode;
+}
+
+#endif
+/* ============== RPI CAMERA HANDLING END ========== */
+
+uint8_t system_debug = 1;
+uint8_t system_value = 0;
+char syscmd[256];
+
+void system_set(uint8_t i, uint8_t _value) {
+	int ret;
+	switch (_value) {
+		case 1: //reboot;
+			ret = system("/sbin/reboot");
+			break;
+		case 2: //sync;
+			ret = system("/bin/sync");
+			break;
+	}
+
+	if (system_debug) printf("Run system command %i. Ret: %i\n",_value,ret);	
+
+	if (ret==0) system_value = _value;
+}
+
+uint8_t system_get(uint8_t i) {
+	return system_value;
+}
+
+
+static uint8_t failsafe_mode = 0;
+
+uint8_t failsafe_rth() {
+	return failsafe_mode;
+}
+
+void failsafe_set(uint8_t i, uint8_t _value) {
+	failsafe_mode = _value;
+}
+
+uint8_t failsafe_get(uint8_t i) {
+	return failsafe_mode;
+}
+
+//============================================
+
+
 uint8_t params_count() {
 	static uint8_t ret = 0;
 
@@ -61,14 +163,19 @@ uint8_t params_count() {
 		+ 1 //gamepad_mapping
 		+ 1 //gamepad_mode
 		+ 3 //gamepad_threshold
+		+ 1 //rth on connection loss
+		+ 1 //reboot
+#ifdef RPICAM_ENABLED		
+		+ 1 //camera config
+#endif
 		;
 
 	return ret;
 }
 
 int params_cfg_load() {
-	uint8_t i,j;
 #ifdef CFG_ENABLED
+	uint8_t i,j;
   	if(!config_read_file(&cfg, CFG_FILE))
   	{
   		printf("Unable to open.\n");
@@ -228,6 +335,29 @@ void params_init() {
 	param[offset].can_save = 1;
 	offset += 1;
 
+	param[offset].internal_idx = 0;
+	sprintf(param[offset].name,"%s%s",(mw_get_box_id("GPS HOME")==UINT8_MAX?"~":"!"),"FAILSAFE");
+	param[offset].get_value = failsafe_get;
+	param[offset].set_value = failsafe_set;
+	param[offset].can_save = 1;
+	offset += 1;
+
+	param[offset].internal_idx = 0;
+	sprintf(param[offset].name,"%s","!SYS");
+	param[offset].get_value = system_get;
+	param[offset].set_value = system_set;
+	param[offset].can_save = 0;
+	offset += 1;
+
+#ifdef RPICAM_ENABLED
+	param[offset].internal_idx = 0;
+	sprintf(param[offset].name,"%s","!VIDEO");
+	param[offset].get_value = rpicam_get;
+	param[offset].set_value = rpicam_set;
+	param[offset].can_save = 0;
+	offset += 1;
+#endif
+
 	params_cfg_open();
 	params_cfg_load();
 }
@@ -315,5 +445,4 @@ uint8_t params_get_all(uint8_t reset) {
 
 	return 0;
 }
-
 

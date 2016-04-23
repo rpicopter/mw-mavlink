@@ -11,7 +11,7 @@ uint8_t udp_recv(mavlink_message_t *msg);
 
 void udp_close();
 
-
 void dispatch(mavlink_message_t *mavlink_msg);
 
+char * get_gc_ip();
 #endif

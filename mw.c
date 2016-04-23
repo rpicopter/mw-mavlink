@@ -15,7 +15,9 @@ static struct S_MSG mw_msg;
 static struct S_MSP_BOXCONFIG boxconf;
 static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
 
-static uint8_t rc_timeout; //
+#define RC_TIMEOUT 60 //1.5sec timeout for manual_control (see main loop for manual_control handling)
+static uint8_t rc_count;
+
 
 void mw_keepalive();
 void mw_feed_rc();
@@ -26,7 +28,7 @@ uint8_t mw_init() {
 	//this retrievs the initial set of settings from MW like boxconfiguration, etc
 	uint8_t filter;
 
-	rc_timeout = 0;
+	rc_count = 0;
 	//ident
 	filter = MSP_IDENT;
 	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
@@ -99,8 +101,8 @@ void mw_keepalive() {
 
 void mw_feed_rc() {
 	//this is run from a loop
-	if (rc_timeout==0) return; //dont feed manual_control if we have not received them for a while
-	rc_timeout--;
+	if (rc_count==0) return; //dont feed manual_control if we have not received them for a while
+	rc_count--;
 
 	//printf("Throttle: %i\n",rc.throttle);
 
@@ -162,7 +164,7 @@ void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t rol
 	rc.roll = roll;
 	rc.pitch = pitch;
 
-	rc_timeout = 60; //1.5sec timeout for manual_control (see main loop for manual_control handling)
+	rc_count = RC_TIMEOUT; 
 
 }
 
@@ -268,6 +270,12 @@ uint8_t mw_pid_refresh(uint8_t reset) {
 	if (got_pidnames && got_pid) return 1;
 
 	return 0;
+}
+
+void mw_rth_start() {
+	uint8_t rth_box = mw_get_box_id("GPS HOME");
+	if (rth_box==UINT8_MAX) return; //RTH not availble
+	mw_box_activate(rth_box);
 }
 
 uint8_t mw_box_count() { //gets number of supported boxes
@@ -469,16 +477,34 @@ uint8_t mw_type() {
 	}
 }
 
-uint16_t toggleBox(uint16_t v) {
-	return v>0?0:0xFFFF;
-}
-
-void mw_toggle_box(uint8_t i) {
+void mw_box_activate(uint8_t i) {
 	if (!boxconf.supported[i]) {
 		printf("BOX %u not supported\n",i);
 		return;
 	}
-	boxconf.active[i] = toggleBox(boxconf.active[i]);
+
+	boxconf.active[i] = 0xFFFF;
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
+}
+
+void mw_box_deactivate(uint8_t i) {
+	if (!boxconf.supported[i]) {
+		printf("BOX %u not supported\n",i);
+		return;
+	}
+
+	boxconf.active[i] = 0;
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
+
+uint8_t mw_box_is_active(uint8_t i) {
+	return boxconf.active[i]?1:0;
+}
+
+void mw_toggle_box(uint8_t i) {
+	if (mw_box_is_active(i)) mw_box_deactivate(i);
+	else mw_box_activate(i);
 }
