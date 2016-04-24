@@ -200,6 +200,20 @@ void mw_attitude_quaternions(float *w, float *x, float *y, float *z) {
 	(*z) =c1*s2*c3 - s1*c2*s3;
 }
 
+void mw_altitude_refresh() {
+	mspmsg_ALTITUDE_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+}
+
+void mw_altitude(int32_t *alt) {
+	struct S_MSP_ALTITUDE altitude;
+	
+	shm_get_incoming(&mw_msg,MSP_ALTITUDE);
+	mspmsg_ALTITUDE_parse(&altitude,&mw_msg);
+
+	(*alt) = altitude.EstAlt;	
+}
+
 void mw_gps_refresh() {
 	mspmsg_RAW_GPS_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);	

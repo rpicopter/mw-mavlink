@@ -19,6 +19,10 @@ void msg_heartbeat();
 
 void msg_gps_raw_int();
 
+void msg_altitude();
+
+void msg_global_position_int();
+
 void msg_attitude_quaternion();
 
 void msg_command_long(mavlink_message_t *msg);

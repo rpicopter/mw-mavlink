@@ -20,6 +20,9 @@ void mw_disarm();
 
 void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll);
 
+void mw_altitude_refresh();
+void mw_altitude(int32_t *alt);
+
 void mw_attitude_refresh();
 void mw_attitude_quaternions(float *w, float *x, float *y, float *z);
 

@@ -23,8 +23,10 @@ const uint8_t active_mav_msg[] = {
 	MAVLINK_MSG_ID_HEARTBEAT,
 	MAVLINK_MSG_ID_SYS_STATUS,
 	MAVLINK_MSG_ID_RADIO_STATUS,
-	MAVLINK_MSG_ID_GPS_RAW_INT,
-	MAVLINK_MSG_ID_ATTITUDE_QUATERNION
+	//MAVLINK_MSG_ID_GPS_RAW_INT
+	//MAVLINK_MSG_ID_ALTITUDE
+	MAVLINK_MSG_ID_ATTITUDE_QUATERNION,
+	MAVLINK_MSG_ID_GLOBAL_POSITION_INT
 };
 
 static uint8_t is_msg_active(uint8_t msg_id) {
@@ -93,13 +95,13 @@ void check_emergency() {
 		rpicam_emergency(); //switch to lower resolution if needed and record
 #endif
 
-		if (count>2) {//we have recovered and again fall into emergency, activate MW failsafe
+		if (count>0) {//we have recovered and again fall into emergency, activate MW failsafe
 			failsafe = 1;
 			mav_status_override = MAV_STATE_POWEROFF;
 		}
 
 	}
-	else if (heartbeat) { 
+	else if (heartbeat && !failsafe) { 
 		mav_status_override = 0;
 		emergency_active = 0;
 	}
@@ -109,7 +111,8 @@ void mavlink_loop() {
 
 	//send default messages
 	if (loop_counter%4==0) msg_attitude_quaternion();  //every 100ms
-	if (loop_counter%40==0) msg_gps_raw_int(); //every sec
+	//if (loop_counter%40==0) msg_gps_raw_int(); //every sec
+	if (loop_counter%40==0) msg_global_position_int(); //every sec
 	if (loop_counter%40==0) msg_heartbeat(); //every sec
 	if (loop_counter%40==0) msg_sys_status(); //every sec
 	if (loop_counter%40==0) msg_radio_status(); //every sec
@@ -185,6 +188,53 @@ uint8_t msg_mission_request_list(mavlink_message_t *msg) {
 	return 0;
 }
 
+void msg_altitude() {
+	if (!is_msg_active(MAVLINK_MSG_ID_ALTITUDE)) return;
+
+	int32_t alt;
+
+	mw_altitude_refresh();
+
+	mw_altitude(&alt);
+
+	mavlink_msg_altitude_pack(1,200, &mav_msg,
+		microsSinceEpoch(),
+		0.f, //monotonic
+		0.f, //amsl
+		0.f, //local
+		alt, //relative 
+		0.f, //terrain
+		0.f //clearance
+	);
+
+	dispatch(&mav_msg);
+}
+
+void msg_global_position_int() {
+	if (!is_msg_active(MAVLINK_MSG_ID_GLOBAL_POSITION_INT)) return;
+	uint8_t fix = 0;
+	int32_t lat = 0;
+	int32_t lon = 0;
+	int32_t alt = 0;
+	int32_t ralt = 0;
+	uint16_t head = 0;
+
+	int32_t dummy;
+
+	mw_altitude_refresh();
+	mw_gps_refresh();
+
+	mw_raw_gps(&dummy, &lat, &lon, &alt, &dummy, &dummy, &dummy);
+	mw_altitude(&ralt);
+
+	mavlink_msg_global_position_int_pack(1,200, &mav_msg,
+		microsSinceEpoch(),
+		lat,lon, alt*10.f, ralt*10.f, 0.f, 0.f, 0.f, 0.f
+	);
+
+	dispatch(&mav_msg);
+}
+
 void msg_gps_raw_int() {
 	if (!is_msg_active(MAVLINK_MSG_ID_GPS_RAW_INT)) return;
 	uint8_t fix = 0;
@@ -203,7 +253,7 @@ void msg_gps_raw_int() {
 
 	mavlink_msg_gps_raw_int_pack(1,200, &mav_msg,
 		microsSinceEpoch(),
-		fix,lat,lon, alt, eph, epv, vel, cog, satellites_visible
+		fix,lat,lon, alt*10.f, eph, epv, vel, cog, satellites_visible
 	);
 
 	dispatch(&mav_msg);
