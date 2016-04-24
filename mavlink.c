@@ -337,7 +337,7 @@ void msg_manual_control(mavlink_message_t *msg) {
 	uint8_t btn_mapping;
 
 	int16_t t,y,p,r;
-
+	//TODO: check if msg timestamp is correct (>prev_timestamp)
 	t = mavlink_msg_manual_control_get_z(msg);
 	y = mavlink_msg_manual_control_get_r(msg);
 	p = mavlink_msg_manual_control_get_x(msg);
