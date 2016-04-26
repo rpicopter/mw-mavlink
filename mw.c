@@ -18,9 +18,45 @@ static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.au
 #define RC_TIMEOUT 60 //1.5sec timeout for manual_control (see main loop for manual_control handling)
 static uint8_t rc_count;
 
-
 void mw_keepalive();
+void mw_altitude_refresh();
+void mw_attitude_refresh();
+void mw_gps_refresh();
+void mw_box_refresh();
 void mw_feed_rc();
+
+typedef void (*t_cb)();
+
+struct _S_TASK {
+	uint16_t freq; //has to be less than loop_counter max value
+	t_cb cb_fn;
+};
+typedef struct _S_TASK S_TASK;
+
+#define MAX_TASK 5
+
+static S_TASK task[MAX_TASK] = {
+	{1, mw_feed_rc}, //run every LOOP_MS (see global.h)
+	{20, mw_altitude_refresh},
+	{20, mw_gps_refresh},
+	{40, mw_keepalive},
+	{40, mw_box_refresh}	
+};
+
+
+void mw_loop() { //
+	static uint8_t counter = 0;
+	uint8_t i;
+
+	for (i=0;i<MAX_TASK;i++)
+		if (counter%task[i].freq==0) {
+			task[i].cb_fn();
+		}
+
+	counter++;
+	if (counter==100) counter=0;
+
+}
 
 uint8_t mw_init() {
  	if (shm_client_init()) return -1; 
@@ -72,33 +108,6 @@ void mw_end() {
  	shm_client_end(); //close channel to mw-service	
 }
 
-void mw_keepalive() {
-	//keep alive for MultiWii and the service
-	static uint8_t err_counter = 0; //number of missed status messages
-	uint8_t filter;
-
-	mspmsg_LOCALSTATUS_serialize(&mw_msg,NULL);
-	shm_put_outgoing(&mw_msg);	
-
-	mspmsg_STATUS_serialize(&mw_msg,NULL);
-	shm_put_outgoing(&mw_msg);
-
-	mspmsg_BOX_serialize(&mw_msg,NULL);
-	shm_put_outgoing(&mw_msg);	
-
-	filter = MSP_STATUS;
-	if (!shm_scan_incoming_f(&mw_msg,&filter,1)) err_counter++;
-	else {
-		err_counter = 0;
-		mw_status = 0;
-	}
-
-	if (err_counter>MW_TIMEOUT) {
-		mw_status = 1;
-	}
-}
-
-
 void mw_feed_rc() {
 	//this is run from a loop
 	if (rc_count==0) return; //dont feed manual_control if we have not received them for a while
@@ -110,94 +119,19 @@ void mw_feed_rc() {
 	shm_put_outgoing(&mw_msg);
 }
 
-void mw_loop() { //
-	static uint8_t counter = 0;
 
-	//mw_keepalive every second
-	if (counter%(1000/25)==0) mw_keepalive(); //every 1000ms but the loop_ms is 25
+/* ============== REFRESH FUNCTIONS ==============  */
+void mw_box_refresh() {
+	mspmsg_BOX_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
 
-	if (counter%1==0) mw_feed_rc(); //ever 25ms
-
-
-
-	counter++;
-	if (counter==100) counter=0;
-
+	shm_get_incoming(&mw_msg,MSP_BOX);
+	mspmsg_BOX_parse(&boxconf,&mw_msg);
 }
-
-void mw_arm() {
-	//TODO
-	//boxconf.active[BOXARM] = toggleBox(boxconf.active[BOXARM]);
-	//mspmsg_SET_BOX_serialize(&msg,&boxconf);
-	//shm_put_outgoing(&msg);	
-}
-
-void mw_disarm() {
-	//TODO
-}
-
-uint16_t mw_get_comm_drop_count() {
-	//this get count of errors on MW->MW_SERVICE link only
-	struct S_MSP_LOCALSTATUS lstatus;
-	
-	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
-	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
-
-	return lstatus.crc_error_count;
-}
-
-uint16_t mw_get_comm_drop_rate() {
-	//this get count of errors on MW->MW_SERVICE link only
-	struct S_MSP_LOCALSTATUS lstatus;
-	
-	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
-	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
-
-	if (!lstatus.rx_count) return 0;
-	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
-}
-
-void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
-
-	rc.throttle = throttle;
-	rc.yaw = yaw;
-	rc.roll = roll;
-	rc.pitch = pitch;
-
-	rc_count = RC_TIMEOUT; 
-
-}
-
 
 void mw_attitude_refresh() {
 	mspmsg_ATTITUDE_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);
-}
-
-void mw_attitude_quaternions(float *w, float *x, float *y, float *z) {
-	struct S_MSP_ATTITUDE attitude;
-	
-	shm_get_incoming(&mw_msg,MSP_ATTITUDE);
-	mspmsg_ATTITUDE_parse(&attitude,&mw_msg);
-
-	//printf("yaw: %i x: %i y: %i\n",attitude.heading,attitude.angx/10,attitude.angy/10);
-
-	float a = (M_PI / 180) * attitude.angx/10.f;
-	float b = (M_PI / 180) * attitude.heading;
-	float c = -(M_PI / 180) * attitude.angy/10.f;
-
-    double c1 = cos(a/2);
-    double s1 = sin(a/2);
-    double c2 = cos(b/2);
-    double s2 = sin(b/2);
-    double c3 = cos(c/2);
-    double s3 = sin(c/2);
-    double c1c2 = c1*c2;
-    double s1s2 = s1*s2;
-    (*w) =c1c2*c3 - s1s2*s3;
-  	(*x) =c1c2*s3 + s1s2*c3;
-	(*y) =s1*c2*c3 + c1*s2*s3;
-	(*z) =c1*s2*c3 - s1*c2*s3;
 }
 
 void mw_altitude_refresh() {
@@ -205,33 +139,32 @@ void mw_altitude_refresh() {
 	shm_put_outgoing(&mw_msg);
 }
 
-void mw_altitude(int32_t *alt) {
-	struct S_MSP_ALTITUDE altitude;
-	
-	shm_get_incoming(&mw_msg,MSP_ALTITUDE);
-	mspmsg_ALTITUDE_parse(&altitude,&mw_msg);
-
-	(*alt) = altitude.EstAlt;	
-}
-
 void mw_gps_refresh() {
 	mspmsg_RAW_GPS_serialize(&mw_msg,NULL);
 	shm_put_outgoing(&mw_msg);	
 }
 
-void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
-	struct S_MSP_RAW_GPS gps;
-	
-	shm_get_incoming(&mw_msg,MSP_RAW_GPS);
-	mspmsg_RAW_GPS_parse(&gps,&mw_msg);	
+void mw_keepalive() {
+	//keep alive for MultiWii and the service
+	static uint8_t err_counter = 0; //number of missed status messages
+	uint8_t filter;
 
-	(*fix) = gps.fix?3:0;
-	(*lat) = gps.lat;
-	(*lon) = gps.lon;
-	(*alt) = gps.alt;
-	(*vel) = gps.speed;
-	(*cog) = gps.ground_course*10;
-	(*satellites_visible) = gps.num_sat;
+	mspmsg_LOCALSTATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);	
+
+	mspmsg_STATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+
+	filter = MSP_STATUS;
+	if (!shm_scan_incoming_f(&mw_msg,&filter,1)) err_counter++;
+	else {
+		err_counter = 0;
+		mw_status = 0;
+	}
+
+	if (err_counter>MW_TIMEOUT) {
+		mw_status = 1;
+	}
 }
 
 //re-requests pid values and names
@@ -285,6 +218,117 @@ uint8_t mw_pid_refresh(uint8_t reset) {
 
 	return 0;
 }
+/* ============== END REFRESH FUNCTIONS ============== */
+
+void mw_arm() {
+	struct S_MSP_STICKCOMBO msg;
+	msg.combo = STICKARM;
+
+	mspmsg_STICKCOMBO_serialize(&mw_msg,&msg);
+	shm_put_outgoing(&mw_msg);	
+
+	//trigger status refresh for quicker response
+	mspmsg_STATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+}
+
+void mw_disarm() {
+	struct S_MSP_STICKCOMBO msg;
+	msg.combo = STICKDISARM;
+
+	mspmsg_STICKCOMBO_serialize(&mw_msg,&msg);
+	shm_put_outgoing(&mw_msg);	
+
+	//trigger status refresh for quicker response
+	mspmsg_STATUS_serialize(&mw_msg,NULL);
+	shm_put_outgoing(&mw_msg);
+}
+
+uint16_t mw_get_comm_drop_count() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
+
+	return lstatus.crc_error_count;
+}
+
+uint16_t mw_get_comm_drop_rate() {
+	//this get count of errors on MW->MW_SERVICE link only
+	struct S_MSP_LOCALSTATUS lstatus;
+	
+	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
+	mspmsg_LOCALSTATUS_parse(&lstatus,&mw_msg);	
+
+	if (!lstatus.rx_count) return 0;
+	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
+}
+
+void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
+
+	rc.throttle = throttle;
+	rc.yaw = yaw;
+	rc.roll = roll;
+	rc.pitch = pitch;
+
+	rc_count = RC_TIMEOUT; 
+
+}
+
+
+void mw_attitude_quaternions(float *w, float *x, float *y, float *z) {
+	struct S_MSP_ATTITUDE attitude;
+	
+	shm_get_incoming(&mw_msg,MSP_ATTITUDE);
+	mspmsg_ATTITUDE_parse(&attitude,&mw_msg);
+
+	//printf("yaw: %i x: %i y: %i\n",attitude.heading,attitude.angx/10,attitude.angy/10);
+
+	float a = (M_PI / 180) * attitude.angx/10.f;
+	float b = (M_PI / 180) * attitude.heading;
+	float c = -(M_PI / 180) * attitude.angy/10.f;
+
+    double c1 = cos(a/2);
+    double s1 = sin(a/2);
+    double c2 = cos(b/2);
+    double s2 = sin(b/2);
+    double c3 = cos(c/2);
+    double s3 = sin(c/2);
+    double c1c2 = c1*c2;
+    double s1s2 = s1*s2;
+    if (w) (*w) = c1c2*c3 - s1s2*s3;
+  	if (x) (*x) = c1c2*s3 + s1s2*c3;
+	if (y) (*y) = s1*c2*c3 + c1*s2*s3;
+	if (z) (*z) = c1*s2*c3 - s1*c2*s3;
+}
+
+void mw_altitude(int32_t *alt) {
+	struct S_MSP_ALTITUDE altitude;
+	
+	shm_get_incoming(&mw_msg,MSP_ALTITUDE);
+	mspmsg_ALTITUDE_parse(&altitude,&mw_msg);
+
+	if (alt) (*alt) = altitude.EstAlt;	
+}
+
+
+void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
+	struct S_MSP_RAW_GPS gps;
+	
+	shm_get_incoming(&mw_msg,MSP_RAW_GPS);
+	mspmsg_RAW_GPS_parse(&gps,&mw_msg);	
+
+	if (fix) (*fix) = gps.fix?3:0;
+	if (lat) (*lat) = gps.lat;
+	if (lon) (*lon) = gps.lon;
+	if (alt) (*alt) = gps.alt;
+	if (vel) (*vel) = gps.speed;
+	if (cog) (*cog) = gps.ground_course*10;
+	if (satellites_visible) (*satellites_visible) = gps.num_sat;
+}
+
+
 
 void mw_rth_start() {
 	uint8_t rth_box = mw_get_box_id("GPS HOME");
@@ -391,8 +435,8 @@ void mw_get_signal(int8_t *rssi, int8_t *noise) {
 	shm_get_incoming(&mw_msg,MSP_LOCALSTATUS);
 	mspmsg_LOCALSTATUS_parse(&t,&mw_msg);	
 
-	(*rssi) = t.rssi;
-	(*noise) = t.noise;	
+	if (rssi) (*rssi) = t.rssi;
+	if (noise) (*noise) = t.noise;	
 }
 
 uint32_t mw_sys_status_sensors() {
@@ -411,12 +455,13 @@ uint32_t mw_sys_status_sensors() {
 
 	ret = MAV_SYS_STATUS_SENSOR_3D_GYRO; //assume we always have gyro
 
+	ret |= MAV_SYS_STATUS_SENSOR_YAW_POSITION; 
 
 	if (get_bit(status.sensor,0)) ret |= (MAV_SYS_STATUS_SENSOR_3D_ACCEL | MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION);	//acc
-	//if (get_bit(status.sensors,1)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL	//baro
+	if (get_bit(status.sensor,1)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL;	//baro
 	if (get_bit(status.sensor,2)) ret |= MAV_SYS_STATUS_SENSOR_3D_MAG;	//mag
 	if (get_bit(status.sensor,3)) ret |= MAV_SYS_STATUS_SENSOR_GPS; 	//gps
-	//if (get_bit(status.sensors,4)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL	//sonar
+	if (get_bit(status.sensor,4)) ret |= MAV_SYS_STATUS_SENSOR_Z_ALTITUDE_CONTROL;	//sonar
 
 	return ret;
 }
@@ -443,8 +488,11 @@ uint8_t mw_mode_flag() {
 
 	uint8_t ret = 0;
 	if (msp_is_armed(&status)) ret |= (MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED);
-	if (boxconf.active[BOXHORIZON]) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
+	if (boxconf.value[BOXBARO] || boxconf.value[BOXGPSHOLD]) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
+	if (boxconf.value[BOXGPSHOME]) ret |= MAV_MODE_FLAG_AUTO_ENABLED;
+	if (boxconf.value[BOXGPSNAV]) ret |= MAV_MODE_FLAG_GUIDED_ENABLED;
 
+	
 	return ret;
 }
 
@@ -497,7 +545,7 @@ void mw_box_activate(uint8_t i) {
 		return;
 	}
 
-	boxconf.active[i] = 0xFFFF;
+	boxconf.value[i] = 0xFFFF;
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
@@ -508,14 +556,14 @@ void mw_box_deactivate(uint8_t i) {
 		return;
 	}
 
-	boxconf.active[i] = 0;
+	boxconf.value[i] = 0;
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 }
 
 
 uint8_t mw_box_is_active(uint8_t i) {
-	return boxconf.active[i]?1:0;
+	return boxconf.value[i]?1:0;
 }
 
 void mw_toggle_box(uint8_t i) {

@@ -11,20 +11,6 @@ void mavlink_end();
 
 void mavlink_loop();
 
-void msg_sys_status();
-
-void msg_radio_status();
-
-void msg_heartbeat();
-
-void msg_gps_raw_int();
-
-void msg_altitude();
-
-void msg_global_position_int();
-
-void msg_attitude_quaternion();
-
 void msg_command_long(mavlink_message_t *msg);
 
 void msg_param_set_pid(mavlink_message_t *msg);
@@ -36,7 +22,6 @@ void msg_param_request_read(mavlink_message_t *msg);
 void msg_param_request_list(mavlink_message_t *msg);
 
 uint8_t msg_mission_request_list(mavlink_message_t *msg);
-
 
 void msg_manual_control(mavlink_message_t *msg);
 

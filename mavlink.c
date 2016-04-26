@@ -9,55 +9,68 @@
 
 static uint8_t debug = 0;
 static uint8_t failsafe = 0; //will be set if mavlink cannot recover the vehicle, this will stop any manual control
-static uint8_t loop_counter = 0;
 static uint8_t mav_status_override = 0;
 
-typedef uint8_t (*t_cb)(uint8_t);
-t_cb loop_callback; //we use loop_callback to send certain messages with a delay
+typedef uint8_t (*t_cb_i)(uint8_t);
+t_cb_i loop_callback; //we use loop_callback to send certain messages with a delay
 
 static mavlink_message_t mav_msg;
 
 
-//defines list of active messages
-const uint8_t active_mav_msg[] = {
-	MAVLINK_MSG_ID_HEARTBEAT,
-	MAVLINK_MSG_ID_SYS_STATUS,
-	MAVLINK_MSG_ID_RADIO_STATUS,
-	//MAVLINK_MSG_ID_GPS_RAW_INT
-	//MAVLINK_MSG_ID_ALTITUDE
-	MAVLINK_MSG_ID_ATTITUDE_QUATERNION,
-	MAVLINK_MSG_ID_GLOBAL_POSITION_INT
+void check_emergency();
+void msg_sys_status();
+void msg_radio_status();
+void msg_heartbeat();
+void msg_gps_raw_int();
+void msg_altitude();
+void msg_global_position_int();
+void msg_attitude_quaternion();
+
+typedef void (*t_cb)();
+
+struct _S_TASK {
+	uint16_t freq; //has to be less than loop_counter max value
+	t_cb cb_fn;
+};
+typedef struct _S_TASK S_TASK;
+
+#define MAX_TASK 7
+
+static S_TASK task[MAX_TASK] = {
+	{4, msg_attitude_quaternion}, //run every LOOP_MS (see global.h)
+	{40, msg_gps_raw_int},
+	{20, msg_global_position_int},
+	{40, msg_heartbeat},
+	{40, msg_sys_status},
+	{40, msg_radio_status},	
+	{40, check_emergency}	
 };
 
-static uint8_t is_msg_active(uint8_t msg_id) {
+void mavlink_loop() {
+	static uint8_t counter = 0;
 	uint8_t i;
-	for (i=0;i<sizeof(active_mav_msg);i++)
-		if (active_mav_msg[i] == msg_id) return 1;
 
-	return 0;
+	for (i=0;i<MAX_TASK;i++)
+		if (counter%task[i].freq==0) {
+			task[i].cb_fn();
+		}
+
+	//callbacks etc
+	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
+
+	counter++;
+	if (counter==100) counter=0;
 }
+
+
 
 uint64_t microsSinceEpoch()
 {
- 
 	struct timeval tv;
- 
 	uint64_t micros = 0;
- 
 	gettimeofday(&tv, NULL);  
 	micros =  ((uint64_t)tv.tv_sec) * 1000000 + tv.tv_usec;
- 
 	return micros;
-}
-
-void printBits(unsigned int num)
-{
-		int bit;
-   for(bit=0;bit<(sizeof(unsigned int) * 8); bit++)
-   {
-      printf("%i ", num & 0x01);
-      num = num >> 1;
-   }
 }
 
 uint8_t mavlink_init() {
@@ -107,23 +120,6 @@ void check_emergency() {
 	}
 }
 
-void mavlink_loop() {
-
-	//send default messages
-	if (loop_counter%4==0) msg_attitude_quaternion();  //every 100ms
-	//if (loop_counter%40==0) msg_gps_raw_int(); //every sec
-	if (loop_counter%40==0) msg_global_position_int(); //every sec
-	if (loop_counter%40==0) msg_heartbeat(); //every sec
-	if (loop_counter%40==0) msg_sys_status(); //every sec
-	if (loop_counter%40==0) msg_radio_status(); //every sec
-	if (loop_counter%40==0) check_emergency(); //every sec
-
-	//callbacks etc
-	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
-
-	loop_counter++;
-	if (loop_counter==100) loop_counter=0;
-}
 
 void mav_cmd_arm_disarm(mavlink_message_t *msg) {
 	//arm disarm via box
@@ -189,11 +185,7 @@ uint8_t msg_mission_request_list(mavlink_message_t *msg) {
 }
 
 void msg_altitude() {
-	if (!is_msg_active(MAVLINK_MSG_ID_ALTITUDE)) return;
-
 	int32_t alt;
-
-	mw_altitude_refresh();
 
 	mw_altitude(&alt);
 
@@ -211,20 +203,12 @@ void msg_altitude() {
 }
 
 void msg_global_position_int() {
-	if (!is_msg_active(MAVLINK_MSG_ID_GLOBAL_POSITION_INT)) return;
-	uint8_t fix = 0;
 	int32_t lat = 0;
 	int32_t lon = 0;
 	int32_t alt = 0;
 	int32_t ralt = 0;
-	uint16_t head = 0;
 
-	int32_t dummy;
-
-	mw_altitude_refresh();
-	mw_gps_refresh();
-
-	mw_raw_gps(&dummy, &lat, &lon, &alt, &dummy, &dummy, &dummy);
+	mw_raw_gps(NULL, &lat, &lon, &alt, NULL, NULL, NULL);
 	mw_altitude(&ralt);
 
 	mavlink_msg_global_position_int_pack(1,200, &mav_msg,
@@ -236,7 +220,6 @@ void msg_global_position_int() {
 }
 
 void msg_gps_raw_int() {
-	if (!is_msg_active(MAVLINK_MSG_ID_GPS_RAW_INT)) return;
 	uint8_t fix = 0;
 	int32_t lat = 0;
 	int32_t lon = 0;
@@ -246,8 +229,6 @@ void msg_gps_raw_int() {
 	uint16_t vel = 0;
 	uint16_t cog = 0;
 	uint8_t satellites_visible = 0;
-
-	mw_gps_refresh();
 
 	mw_raw_gps(&fix, &lat, &lon, &alt, &vel, &cog, &satellites_visible);
 
@@ -260,8 +241,6 @@ void msg_gps_raw_int() {
 }
 
 void msg_radio_status() {
-	if (!is_msg_active(MAVLINK_MSG_ID_RADIO_STATUS)) return;
-
 	int8_t rssi,noise;
 
 	mw_get_signal(&rssi,&noise);
@@ -280,7 +259,6 @@ void msg_radio_status() {
 }
 
 void msg_sys_status() {
-	if (!is_msg_active(MAVLINK_MSG_ID_SYS_STATUS)) return;
 	mavlink_msg_sys_status_pack(1, 200, &mav_msg,
 		mw_sys_status_sensors(), //present sensors
 		mw_sys_status_sensors(), //active sensors (assume all present are active for MW) //could use 0xFFFFFFFF ?
@@ -300,8 +278,6 @@ void msg_sys_status() {
 }
 
 void msg_heartbeat() {
-	if (!is_msg_active(MAVLINK_MSG_ID_HEARTBEAT)) return;
-
 	uint8_t state = mav_status_override?mav_status_override:mw_state();
 	mavlink_msg_heartbeat_pack(1, 200, &mav_msg, 
 		mw_type(),
@@ -314,9 +290,7 @@ void msg_heartbeat() {
 }
 
 void msg_attitude_quaternion() {
-	if (!is_msg_active(MAVLINK_MSG_ID_ATTITUDE_QUATERNION)) return;
 	float w,x,y,z;
-	mw_attitude_refresh();
 
 	mw_attitude_quaternions(&w, &x, &y, &z);
 

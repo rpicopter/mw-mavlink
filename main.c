@@ -20,15 +20,6 @@ uint8_t debug = 0;
 uint8_t stop = 0;
 uint16_t loop_counter = 0;
 
-typedef void (*t_cb)();
-
-struct _S_TASK {
-	uint16_t freq; //has to be less than loop_counter max value
-	t_cb cb_fn;
-};
-
-typedef struct _S_TASK S_TASK;
-
 void check_incoming_udp(); //checks for messages on UDP port
 
 #define HEARTBEAT_LIFE 3000/LOOP_MS
@@ -37,8 +28,18 @@ void check_incoming_udp(); //checks for messages on UDP port
 //mavlink will feed SET_RAW_RC as long as RC_TIMOUT>0 (mw.c, expressed in LOOP_MS)
 
 uint16_t heartbeat = 0;
+
+typedef void (*t_cb)();
+
+struct _S_TASK {
+	uint16_t freq; //has to be less than loop_counter max value
+	t_cb cb_fn;
+};
+typedef struct _S_TASK S_TASK;
+
 #define MAX_TASK 3
-S_TASK task[MAX_TASK] = {
+
+static S_TASK task[MAX_TASK] = {
 	{1, check_incoming_udp}, //run every LOOP_MS (see global.h)
 	{1, mw_loop},
 	{1, mavlink_loop}
@@ -98,16 +99,10 @@ void mssleep(unsigned int ms) {
 void loop() {
 	uint8_t i;
 	loop_counter=0;
-
-	static int test = 20;
 	while (!stop) {
 
 		for (i=0;i<MAX_TASK;i++)
 			if (loop_counter%task[i].freq==0) {
-				if (test) {
-					printf("Running task %u\n",i);
-					test--;
-				}
 				task[i].cb_fn();
 			}
 

@@ -20,13 +20,8 @@ void mw_disarm();
 
 void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll);
 
-void mw_altitude_refresh();
 void mw_altitude(int32_t *alt);
-
-void mw_attitude_refresh();
 void mw_attitude_quaternions(float *w, float *x, float *y, float *z);
-
-void mw_gps_refresh();
 void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible);
 
 uint8_t mw_box_count();
@@ -40,9 +35,7 @@ char *mw_get_pid_name(uint8_t id);
 uint8_t mw_get_pid_id(const char *name);
 uint8_t mw_get_pid_value(uint8_t id);
 void mw_set_pid(uint8_t id, uint8_t v);
-
 void mw_get_signal(int8_t *rssi, int8_t *noise);
-
 uint16_t mw_get_comm_drop_count();
 uint16_t mw_get_comm_drop_rate();
 
