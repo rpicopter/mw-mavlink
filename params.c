@@ -22,33 +22,82 @@
 	config_t cfg;
 #endif
 
-
 static mavlink_message_t mav_msg;
 
-static uint8_t debug = 1;
+static uint8_t debug = 1; 
 
-typedef void (*t_param_set)(uint8_t idx, uint8_t val);
-typedef uint8_t (*t_param_get)(uint8_t idx);
+typedef void (*t_param_set)(void* val);
+typedef void (*t_param_get)(void* ret);
+
+typedef void (*_t_param_set_idx)(void* val, uint8_t idx);
+typedef void (*_t_param_get_idx)(void* ret, uint8_t idx);
 
 struct s_param {
-	uint8_t internal_idx;
+	uint8_t component;
+	uint8_t id; //calculated automatically, consecutive id within component
 	char name[17];
+	uint8_t type; //see enum
+	uint8_t idx; //used only for get and set with idx
 	t_param_get get_value;
-	t_param_set set_value;
+	t_param_set set_value;	
+	uint8_t delayed; //delayed parameter - when setting it, the get should be performed with a delay
 	uint8_t can_save;
 };
 
 static struct s_param *param;
 
+uint8_t params_count();
 
-static uint8_t _get_value(uint8_t idx) {
-	if (!param) return 0;
-	return param[idx].get_value(param[idx].internal_idx);
+static struct s_param *_get_param(uint8_t component, uint8_t id) {
+	uint8_t i;
+	uint8_t p_count = params_count();
+
+	if (!param) return NULL;
+
+	for (i=0;i<p_count;i++)
+		if ((param[i].component==component) && (param[i].id==id)) return &param[i];
+
+	return NULL;
 }
 
-static void _set_value(uint8_t idx, uint8_t v) {
-	if (!param) return;
-	param[idx].set_value(param[idx].internal_idx,v);
+static struct s_param *_get_param_by_name(uint8_t component, char *name) {
+	uint8_t i;
+	uint8_t p_count = params_count();
+
+	if (!param) return NULL;
+
+	for (i=0;i<p_count;i++)
+		if (param[i].component==component)
+			if (strcmp(param[i].name,name)==0) return &param[i];
+
+	return NULL;
+}
+
+static mavlink_param_union_t *_get_value(uint8_t component, uint8_t id) {
+	static mavlink_param_union_t ret;
+	ret.type = UINT8_MAX;
+	ret.param_float = 0.f; //reset value to 0
+
+	struct s_param *p = _get_param(component,id);
+
+	if (!p) return NULL;
+	if (!p->get_value) return NULL;
+
+	if (p->idx!=UINT8_MAX) ((_t_param_get_idx)p->get_value)(ret.bytes,p->idx);
+	else p->get_value(ret.bytes);
+
+	ret.type=p->type;
+
+	return &ret;
+}
+
+static void _set_value(uint8_t component, uint8_t id, mavlink_param_union_t *v) {
+	struct s_param *p = _get_param(component,id);
+	if (!p) return;
+	if (!p->set_value) return;
+
+	if (p->idx!=UINT8_MAX) ((_t_param_set_idx)p->set_value)(v->bytes,p->idx);
+	else p->set_value(v->bytes);
 }
 
 
@@ -97,27 +146,26 @@ void rpicam_emergency() {
 	rpicam_start(11);
 }
 
-void rpicam_set(uint8_t i, uint8_t _value) {
-	rpicam_mode = _value;
+void rpicam_set(uint8_t* _value) {
+	rpicam_mode = *_value;
 
-	if (_value==0) rpicam_stop();
-	else rpicam_start(_value);
+	if (rpicam_mode==0) rpicam_stop();
+	else rpicam_start(rpicam_mode);
 }
 
-uint8_t rpicam_get(uint8_t i) {
-	return rpicam_mode;
+void rpicam_get(uint8_t* _value) {
+	(*_value) = rpicam_mode;
 }
 
 #endif
 /* ============== RPI CAMERA HANDLING END ========== */
 
 uint8_t system_debug = 1;
-uint8_t system_value = 0;
 char syscmd[256];
 
-void system_set(uint8_t i, uint8_t _value) {
-	int ret;
-	switch (_value) {
+void system_set(uint8_t* _value) {
+	int ret = 0;
+	switch (*_value) {
 		case 1: //reboot;
 			ret = system("/sbin/reboot");
 			break;
@@ -126,15 +174,8 @@ void system_set(uint8_t i, uint8_t _value) {
 			break;
 	}
 
-	if (system_debug) printf("Run system command %i. Ret: %i\n",_value,ret);	
-
-	if (ret==0) system_value = _value;
+	if (system_debug) printf("Run system command %i. Ret: %i\n",*_value,ret);
 }
-
-uint8_t system_get(uint8_t i) {
-	return system_value;
-}
-
 
 static uint8_t failsafe_mode = 0;
 
@@ -142,12 +183,12 @@ uint8_t failsafe_rth() {
 	return failsafe_mode;
 }
 
-void failsafe_set(uint8_t i, uint8_t _value) {
-	failsafe_mode = _value;
+void failsafe_set(uint8_t *_value) {
+	failsafe_mode = (*_value);
 }
 
-uint8_t failsafe_get(uint8_t i) {
-	return failsafe_mode;
+void failsafe_get(uint8_t *_value) {
+	(*_value) = failsafe_mode;
 }
 
 //============================================
@@ -168,7 +209,21 @@ uint8_t params_count() {
 #ifdef RPICAM_ENABLED		
 		+ 1 //camera config
 #endif
+		+ 1 //eeprom save
+		+ 1 //rth_altitude
+		+ 1 //failsafe_throttle
 		;
+
+	return ret;
+}
+
+uint8_t params_count_component(uint8_t component) {
+	uint8_t i;
+	uint8_t ret = 0;
+	uint8_t all_count = params_count();
+
+	for (i=0;i<all_count;i++)
+		if (param[i].component==component) ret++;
 
 	return ret;
 }
@@ -202,7 +257,11 @@ int params_cfg_load() {
 		} else { //load them
 			j=0;
 			for (i=0;i<params_count();i++)
-				if (param[i].can_save) _set_value( i, config_setting_get_int_elem(setting,j++) );
+				if (param[i].can_save) {
+					mavlink_param_union_t v;
+					v.param_float = config_setting_get_float_elem(setting,j++);
+					_set_value(param[i].component,param[i].id, &v );
+				}
 		}
 	}
 
@@ -226,8 +285,9 @@ void params_cfg_save() {
 	setting = config_setting_add(root, "params", CONFIG_TYPE_ARRAY);
 	for (i=0;i<params_count();i++) 
 		if (param[i].can_save) {
-			ptr=config_setting_add(setting,NULL,CONFIG_TYPE_INT);
-			config_setting_set_int(ptr,_get_value(i));
+			ptr=config_setting_add(setting,NULL,CONFIG_TYPE_FLOAT);
+			mavlink_param_union_t *v = _get_value(param[i].component,param[i].id);
+			config_setting_set_float(ptr,v->param_float);
 		}
 
  	if (!config_write_file(&cfg,CFG_FILE)) 
@@ -264,23 +324,45 @@ void params_cfg_end() {
 void params_init() {
 	uint8_t offset = 0;
 	uint8_t i;
+	uint8_t p_count = params_count();
 	char *ptr;
 
-	param = malloc(sizeof(struct s_param)*params_count());
+	param = malloc(sizeof(struct s_param)*p_count);
 	if (!param) {
 		printf("Error allocating memory for params\n");
 		return;
 	}
 
+	for (i=0;i<p_count;i++) {
+		param[i].idx = UINT8_MAX;
+		param[i].component = 0;
+		param[i].get_value = NULL;
+		param[i].set_value = NULL;
+		param[i].can_save = 0;
+		param[i].delayed = 0;
+		param[i].type = MAV_PARAM_TYPE_UINT8;
+	}
+
 	offset = 0;
 
+
+	//construct all params, NOTE: params relating to given component have to be added at one go
+	//NOTE: only int elements can be currently saved
+	param[offset].component = 200;
+	sprintf(param[offset].name,"%s","!EEPROM_SAVE");
+	param[offset].set_value = (t_param_set)mw_eeprom_write;
+
+	offset++;
+
 	for (i=0;i<mw_pid_count();i++) {
-		param[i+offset].internal_idx = i;
+		param[i+offset].component = 200;
 		ptr = mw_get_pid_name(i);
 		strcpy(param[i+offset].name,ptr);
-		param[i+offset].get_value = mw_get_pid_value;
-		param[i+offset].set_value = mw_set_pid;
-		param[i+offset].can_save = 0;
+		param[i+offset].idx = i; //used for the get and set functions
+		param[i+offset].get_value = (t_param_get)mw_get_pid_value;
+		param[i+offset].set_value = (t_param_set)mw_set_pid;
+		param[i+offset].delayed = 1;
+		param[i+offset].can_save = 0; //we dont want to save in CFG but in MW board
 	}
 	offset += i;
 
@@ -288,75 +370,102 @@ void params_init() {
 		we link gamepad buttons to boxes 
 	*/
 	for (i=0;i<mw_box_count();i++) {
-		param[i+offset].internal_idx = i;
+		param[i+offset].component = 201;
 		ptr = mw_get_box_name(i);
 		if (mw_box_is_supported(i)) 
 			sprintf(param[i+offset].name,"BTN_%s",ptr);
 		else
 			sprintf(param[i+offset].name,"~BTN_%s",ptr);
-		param[i+offset].get_value = gamepad_get_mapping;
-		param[i+offset].set_value = gamepad_set_mapping;
+		param[i+offset].idx = i;
+		param[i+offset].get_value = (t_param_get)gamepad_get_mapping;
+		param[i+offset].set_value = (t_param_set)gamepad_set_mapping;
 		param[i+offset].can_save = 1;
 	}
 	offset += i;
 
-	param[offset].internal_idx = i;
+	param[offset].component = 201;
 	sprintf(param[offset].name,"%s","BTN_THROT_OFF");
-	param[offset].get_value = gamepad_get_mapping;
-	param[offset].set_value = gamepad_set_mapping;
+	param[offset].idx = i;
+	param[offset].get_value = (t_param_get)gamepad_get_mapping;
+	param[offset].set_value = (t_param_set)gamepad_set_mapping;
 	param[offset].can_save = 1;
 	offset += 1;
 
-	param[offset].internal_idx = 0;
-	sprintf(param[offset].name,"%s","!GAMEPAD_MODE");
-	param[offset].get_value = gamepad_get_mode;
-	param[offset].set_value = gamepad_set_mode;
-	param[offset].can_save = 1;
-	offset += 1;
-
-	param[offset].internal_idx = 0;
+	param[offset].idx = 0;
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","THRESHOLD_YAW");
-	param[offset].get_value = gamepad_get_threshold;
-	param[offset].set_value = gamepad_set_threshold;
+	param[offset].get_value = (t_param_get)gamepad_get_threshold;
+	param[offset].set_value = (t_param_set)gamepad_set_threshold;
 	param[offset].can_save = 1;
 	offset += 1;
 
-	param[offset].internal_idx = 1;
+	param[offset].idx = 1;
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","THRESHOLD_PITCH");
-	param[offset].get_value = gamepad_get_threshold;
-	param[offset].set_value = gamepad_set_threshold;
+	param[offset].get_value = (t_param_get)gamepad_get_threshold;
+	param[offset].set_value = (t_param_set)gamepad_set_threshold;
 	param[offset].can_save = 1;
 	offset += 1;
 
-	param[offset].internal_idx = 2;
+	param[offset].idx = 2;
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","THRESHOLD_ROLL");
-	param[offset].get_value = gamepad_get_threshold;
-	param[offset].set_value = gamepad_set_threshold;
+	param[offset].get_value = (t_param_get)gamepad_get_threshold;
+	param[offset].set_value = (t_param_set)gamepad_set_threshold;
 	param[offset].can_save = 1;
 	offset += 1;
 
-	param[offset].internal_idx = 0;
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s","!GAMEPAD_MODE");
+	param[offset].get_value = (t_param_get)gamepad_get_mode;
+	param[offset].set_value = (t_param_set)gamepad_set_mode;
+	param[offset].can_save = 1;
+	offset += 1;
+
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s%s",(mw_get_box_id("GPS HOME")==UINT8_MAX?"~":"!"),"FAILSAFE");
-	param[offset].get_value = failsafe_get;
-	param[offset].set_value = failsafe_set;
+	param[offset].get_value = (t_param_get)failsafe_get;
+	param[offset].set_value = (t_param_set)failsafe_set;
 	param[offset].can_save = 1;
 	offset += 1;
 
-	param[offset].internal_idx = 0;
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","!SYS");
-	param[offset].get_value = system_get;
-	param[offset].set_value = system_set;
-	param[offset].can_save = 0;
+	param[offset].set_value = (t_param_set)system_set;
 	offset += 1;
 
 #ifdef RPICAM_ENABLED
-	param[offset].internal_idx = 0;
+	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","!VIDEO");
-	param[offset].get_value = rpicam_get;
-	param[offset].set_value = rpicam_set;
-	param[offset].can_save = 0;
+	param[offset].get_value = (t_param_get)rpicam_get;
+	param[offset].set_value = (t_param_set)rpicam_set;
 	offset += 1;
 #endif
+
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s","RTH_ALT");
+	param[offset].get_value = (t_param_get)mw_get_rth_alt;
+	param[offset].set_value = (t_param_set)mw_set_rth_alt;
+	param[offset].type = MAV_PARAM_TYPE_UINT16;
+	param[offset].delayed = 1;
+	offset += 1;
+
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s","FAILSAFE_THROT");
+	param[offset].get_value = (t_param_get)mw_get_failsafe_throttle;
+	param[offset].set_value = (t_param_set)mw_set_failsafe_throttle;
+	param[offset].type = MAV_PARAM_TYPE_UINT16;
+	param[offset].delayed = 1;
+	offset += 1;
+	//calculate id for each component
+	uint8_t j = 0,c = 0;
+	for (i=0;i<p_count;i++) {
+		if (param[i].component!=c) {
+			c = param[i].component;
+			j = 0;
+		} 
+		param[i].id=j++;
+	}
 
 	gamepad_init();
 	params_cfg_open();
@@ -375,50 +484,53 @@ void params_end() {
 void params_set(uint8_t component, char *name, float value) {
 	//sets the value of a param at idx
 	//send the param back
+	struct s_param *p = _get_param_by_name(component,name);
 
-	uint8_t idx;	
-	uint8_t old_val;
-	uint8_t i;
+	//uint8_t old_val;
 
 	mavlink_param_union_t m_param;
-
-	if (component!=200) {
-		printf("params_set: Unsupported component %u\n",component);
-		return;
-	}
-
+	mavlink_param_union_t* old;
 	m_param.param_float = value;
 
-	for (i=0;i<params_count();i++)
-		if (strcmp(param[i].name,name)==0) idx = i;
+	_set_value(p->component,p->id,&m_param);
 
-	old_val = _get_value(idx);
-
-	if (m_param.param_uint8==old_val) { //confirm with send only if we are sure that it is saved
-		//if (debug) printf("Value has not changed.\n");
-		params_send(component,idx);
-		params_cfg_save();
-		return;
+	//for certain params it takes time to refresh them. We not gonna send back until it is set
+	
+	old = _get_value(p->component,p->id);
+	
+	if (old && p->delayed && p->delayed<4) { //try 4 times max
+		if (old->param_float != value) { //it got set correctly
+			p->delayed++;
+			return;
+		}
 	}
+	if (p->delayed) p->delayed=1;
 
-	_set_value(idx,m_param.param_uint8);
+	params_send(p->component,p->id);
+
 }
 
-void params_send(uint8_t component, uint8_t idx) {
+void params_send(uint8_t component, uint8_t id) {
 	//reads value of a param at idx
 	//send is back
-	//we are combining all the params
+
+	struct s_param *p = _get_param(component,id);
 
 	mavlink_param_union_t m_param;
-	m_param.param_uint8 = _get_value(idx);
-	m_param.type = MAV_PARAM_TYPE_UINT8;
+	mavlink_param_union_t *ptr;
+	ptr = _get_value(component, id);
+	if (ptr) m_param = (*ptr);
+	else {
+		m_param.type = p->type;
+		m_param.param_float = 0.f;
+	}
 
-	mavlink_msg_param_value_pack(1,component,&mav_msg,param[idx].name,m_param.param_float, m_param.type,params_count(),idx);
+	mavlink_msg_param_value_pack(1,p->component,&mav_msg,p->name,m_param.param_float, m_param.type,params_count_component(p->component),p->id);
 
 	dispatch(&mav_msg);
 
 	//send all pids under COMPONENT 200
-	printf("-> param_value id: %u name: %s value: %u. ALL: %u\n",idx,param[idx].name,m_param.param_uint8,params_count());
+	printf("-> param_value id: %u component: %u, name: %s value: %i. ALL: %u\n",id,component,p->name,m_param.param_int32,params_count_component(p->component));
 }
 
 //before we can send all values we need to refresh some of them
@@ -439,7 +551,8 @@ uint8_t params_get_all(uint8_t reset) {
 			break;
 		case 1: //send params
 			for (i=0;i<params_count();i++)
-				params_send(200,i);
+				params_send(param[i].component,param[i].id);
+			
 			return 1;
 			break;
 	}

@@ -12,7 +12,7 @@ void params_end();
 
 uint8_t params_get_all(uint8_t reset);
 
-void params_send(uint8_t component, uint8_t idx);
+void params_send(uint8_t component, uint8_t id);
 
 void params_set(uint8_t component, char *name, float value);
 

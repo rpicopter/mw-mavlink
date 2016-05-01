@@ -1,4 +1,5 @@
 #include "gamepad.h"
+#include "mw.h"
 
 static uint8_t mapping[CHECKBOXITEMS+1]; //+1 for reset_throttle
 static uint8_t threshold[3]; //yaw, pitch, roll
@@ -15,34 +16,39 @@ void gamepad_init() {
 		mapping[i] = UINT8_MAX;
 }
 
-void gamepad_set_mode(uint8_t i, uint8_t _mode) {
-	mode = _mode;	
+void gamepad_set_mode(uint8_t *_mode) {
+	mode = (*_mode);	
 }
 
-uint8_t gamepad_get_mode(uint8_t i) {
-	return mode;
+void gamepad_get_mode(uint8_t *_mode) {
+	(*_mode) = mode;
 }
 
-void gamepad_set_mapping(uint8_t btn, uint8_t action) {
-	mapping[btn] = action;
+void gamepad_set_mapping(uint8_t *action, uint8_t btn) {
+	mapping[btn] = (*action);
 }
 
-uint8_t gamepad_get_mapping(uint8_t btn) {
-	return mapping[btn];
+void gamepad_get_mapping(uint8_t *action, uint8_t btn) {
+	(*action) = mapping[btn];
 }
 
-void gamepad_set_threshold(uint8_t i, uint8_t t) {
-	threshold[i] = t;
+void gamepad_set_threshold(uint8_t *value, uint8_t i) {
+	threshold[i] = (*value);
 }
 
-uint8_t gamepad_get_threshold(uint8_t i) {
-	return threshold[i];
+void gamepad_get_threshold(uint8_t *value, uint8_t i) {
+	(*value) = threshold[i];
 }
 
 static int16_t throttle = 1000;
 
 void gamepad_control_reset_throttle() {
+	uint8_t i;
 	throttle = 1000;
+
+	for (i=0;i<mw_box_count();i++) { //check for box buttons
+		mw_box_deactivate(i);
+	}	
 }
 
 void gamepad_control_calculate(int16_t *_throttle, int16_t *_yaw, int16_t *_pitch, int16_t *_roll) {

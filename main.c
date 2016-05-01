@@ -166,13 +166,13 @@ int main(int argc, char* argv[])
 
  	printf("Setting up mw...\n");
  	if (mw_init()) {
- 		printf("Error!\n");
+ 		printf("Error mw_init!\n");
  		return -1;
  	}
 
   	printf("Setting up mavlink...\n");
  	if (mavlink_init()) {
-  		printf("Error!\n");
+  		printf("Error mavlink!\n");
  		return -1;		 
  	}	
 
