@@ -103,6 +103,24 @@ uint8_t mw_init() {
 		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
 	} 	
 
+	filter = MSP_RC_TUNING;
+	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+	while (1) {
+		mspmsg_RC_TUNING_serialize(&mw_msg);
+		shm_put_outgoing(&mw_msg);
+		mssleep(50);
+		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
+	} 	
+
+	filter = MSP_NAV_CONFIG;
+	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+	while (1) {
+		mspmsg_NAV_CONFIG_serialize(&mw_msg);
+		shm_put_outgoing(&mw_msg);
+		mssleep(50);
+		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
+	} 
+
 	//boxids
 	filter = MSP_BOXIDS;
 	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
@@ -326,6 +344,45 @@ uint16_t mw_get_i2c_drop_rate() {
 	return (lstatus.crc_error_count/lstatus.rx_count)*10000; //100%=10000
 }
 
+char *mw_get_rc_tunning_name(uint8_t i) {
+	switch(i) {
+		case 0: return "RC_RATE";
+		case 1: return "RC_EXPO";
+		case 2: return "ROLL_PITCH_R";
+		case 3: return "YAW_RATE";
+		case 4: return "DYN_THR_PID";
+		case 5: return "THR_MID";
+		case 6: return "THR_EXPO";
+	}
+	return "...";
+}
+
+void mw_get_rc_tunning(uint8_t* v, uint8_t id) {
+	struct S_MSP_RC_TUNING rct;
+	
+	shm_get_incoming(&mw_msg,MSP_RC_TUNING);
+	mspmsg_RC_TUNING_parse(&rct,&mw_msg);
+
+	(*v) = ((uint8_t*)&rct)[id];
+}
+
+void mw_set_rc_tunning(uint8_t* v, uint8_t id) {
+	struct S_MSP_RC_TUNING rct;
+	
+	shm_get_incoming(&mw_msg,MSP_RC_TUNING);
+	mspmsg_RC_TUNING_parse(&rct,&mw_msg);
+
+	((uint8_t*)&rct)[id] = (*v);
+	//save
+	mspmsg_SET_RC_TUNING_serialize(&mw_msg,&rct);
+
+	shm_put_outgoing(&mw_msg);
+
+	//refresh
+	mspmsg_RC_TUNING_serialize(&mw_msg);
+	shm_put_outgoing(&mw_msg);	
+}
+
 void mw_get_rth_alt(uint16_t *alt) {
 	struct S_MSP_NAV_CONFIG nav;
 	
@@ -333,6 +390,7 @@ void mw_get_rth_alt(uint16_t *alt) {
 	mspmsg_NAV_CONFIG_parse(&nav,&mw_msg);
 
 	(*alt) = nav.rth_altitude;
+	printf("RTH %u\n",*alt);
 }
 
 void mw_set_rth_alt(uint16_t *alt) {

@@ -42,6 +42,10 @@ void mw_get_signal(int8_t *rssi, int8_t *noise);
 uint16_t mw_get_i2c_drop_count();
 uint16_t mw_get_i2c_drop_rate();
 
+char *mw_get_rc_tunning_name(uint8_t i);
+void mw_get_rc_tunning(uint8_t* v, uint8_t id);
+void mw_set_rc_tunning(uint8_t* v, uint8_t id);
+
 void mw_get_rth_alt(uint16_t* alt);
 void mw_set_rth_alt(uint16_t* alt);
 

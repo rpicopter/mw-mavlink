@@ -1,8 +1,6 @@
 /* 
-	this only support params with uint8_t value
 	the important functions are params_init and params_count
 	all other functions should not needing changed
-
 */
 
 
@@ -206,6 +204,7 @@ uint8_t params_count() {
 		+ 3 //gamepad_threshold
 		+ 1 //rth on connection loss
 		+ 1 //reboot
+		+ 7 //rc_tunning
 #ifdef RPICAM_ENABLED		
 		+ 1 //camera config
 #endif
@@ -391,6 +390,41 @@ void params_init() {
 	param[offset].can_save = 1;
 	offset += 1;
 
+	param[offset].component = 201;
+	sprintf(param[offset].name,"%s","!GAMEPAD_MODE");
+	param[offset].get_value = (t_param_get)gamepad_get_mode;
+	param[offset].set_value = (t_param_set)gamepad_set_mode;
+	param[offset].can_save = 1;
+	offset += 1;
+
+	param[offset].component = 201;
+	sprintf(param[offset].name,"%s","!SYS");
+	param[offset].set_value = (t_param_set)system_set;
+	offset += 1;
+
+#ifdef RPICAM_ENABLED
+	param[offset].component = 201;
+	sprintf(param[offset].name,"%s","!VIDEO");
+	param[offset].get_value = (t_param_get)rpicam_get;
+	param[offset].set_value = (t_param_set)rpicam_set;
+	offset += 1;
+#endif
+
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s%s",(mw_get_box_id("GPS HOME")==UINT8_MAX?"~":"!"),"FAILSAFE");
+	param[offset].get_value = (t_param_get)failsafe_get;
+	param[offset].set_value = (t_param_set)failsafe_set;
+	param[offset].can_save = 1;
+	offset += 1;
+
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s","FAILSAFE_THROT");
+	param[offset].get_value = (t_param_get)mw_get_failsafe_throttle;
+	param[offset].set_value = (t_param_set)mw_set_failsafe_throttle;
+	param[offset].type = MAV_PARAM_TYPE_UINT16;
+	param[offset].delayed = 1;
+	offset += 1;
+
 	param[offset].idx = 0;
 	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","THRESHOLD_YAW");
@@ -416,33 +450,6 @@ void params_init() {
 	offset += 1;
 
 	param[offset].component = 202;
-	sprintf(param[offset].name,"%s","!GAMEPAD_MODE");
-	param[offset].get_value = (t_param_get)gamepad_get_mode;
-	param[offset].set_value = (t_param_set)gamepad_set_mode;
-	param[offset].can_save = 1;
-	offset += 1;
-
-	param[offset].component = 202;
-	sprintf(param[offset].name,"%s%s",(mw_get_box_id("GPS HOME")==UINT8_MAX?"~":"!"),"FAILSAFE");
-	param[offset].get_value = (t_param_get)failsafe_get;
-	param[offset].set_value = (t_param_set)failsafe_set;
-	param[offset].can_save = 1;
-	offset += 1;
-
-	param[offset].component = 202;
-	sprintf(param[offset].name,"%s","!SYS");
-	param[offset].set_value = (t_param_set)system_set;
-	offset += 1;
-
-#ifdef RPICAM_ENABLED
-	param[offset].component = 202;
-	sprintf(param[offset].name,"%s","!VIDEO");
-	param[offset].get_value = (t_param_get)rpicam_get;
-	param[offset].set_value = (t_param_set)rpicam_set;
-	offset += 1;
-#endif
-
-	param[offset].component = 202;
 	sprintf(param[offset].name,"%s","RTH_ALT");
 	param[offset].get_value = (t_param_get)mw_get_rth_alt;
 	param[offset].set_value = (t_param_set)mw_set_rth_alt;
@@ -450,13 +457,16 @@ void params_init() {
 	param[offset].delayed = 1;
 	offset += 1;
 
-	param[offset].component = 202;
-	sprintf(param[offset].name,"%s","FAILSAFE_THROT");
-	param[offset].get_value = (t_param_get)mw_get_failsafe_throttle;
-	param[offset].set_value = (t_param_set)mw_set_failsafe_throttle;
-	param[offset].type = MAV_PARAM_TYPE_UINT16;
-	param[offset].delayed = 1;
-	offset += 1;
+	for (i=0;i<7;i++) {
+		param[offset+i].component = 202;
+		sprintf(param[offset+i].name,"%s",mw_get_rc_tunning_name(i));
+		param[offset+i].idx = i;
+		param[offset+i].get_value = (t_param_get)mw_get_rc_tunning;
+		param[offset+i].set_value = (t_param_set)mw_set_rc_tunning;
+		param[offset+i].delayed = 1;
+	}
+	offset += i;
+
 	//calculate id for each component
 	uint8_t j = 0,c = 0;
 	for (i=0;i<p_count;i++) {
