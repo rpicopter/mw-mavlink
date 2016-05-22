@@ -165,7 +165,7 @@ void system_set(uint8_t* _value) {
 	int ret = 0;
 	switch (*_value) {
 		case 1: //reboot;
-			ret = system("/sbin/reboot");
+			ret = system("/sbin/reboot &");
 			break;
 		case 2: //sync;
 			ret = system("/bin/sync");
@@ -183,6 +183,7 @@ uint8_t failsafe_rth() {
 
 void failsafe_set(uint8_t *_value) {
 	failsafe_mode = (*_value);
+	mw_set_rth(failsafe_mode);
 }
 
 void failsafe_get(uint8_t *_value) {

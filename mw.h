@@ -46,6 +46,7 @@ char *mw_get_rc_tunning_name(uint8_t i);
 void mw_get_rc_tunning(uint8_t* v, uint8_t id);
 void mw_set_rc_tunning(uint8_t* v, uint8_t id);
 
+void mw_set_rth(uint8_t v);
 void mw_get_rth_alt(uint16_t* alt);
 void mw_set_rth_alt(uint16_t* alt);
 

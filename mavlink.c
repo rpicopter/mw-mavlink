@@ -74,12 +74,10 @@ void mavlink_loop() {
 }
 
 uint8_t mavlink_init() {
-	params_init();
 	return 0;
 }
 
 void mavlink_end() {
-	params_end();
 }
 
 void mav_cmd_arm_disarm(mavlink_message_t *msg) {

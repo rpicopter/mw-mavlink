@@ -170,6 +170,9 @@ int main(int argc, char* argv[])
  		return -1;
  	}
 
+ 	printf("Initializing PARAMS...\n");
+ 	params_init(); 	
+
   	printf("Setting up mavlink...\n");
  	if (mavlink_init()) {
   		printf("Error mavlink!\n");
@@ -181,6 +184,9 @@ int main(int argc, char* argv[])
  	
  	printf("Cleaning up...\n");
  	mavlink_end();
+
+ 	params_end();
+
  	mw_end();
 
  	udp_close();

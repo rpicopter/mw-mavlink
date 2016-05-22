@@ -137,6 +137,8 @@ uint8_t mw_init() {
 	mspmsg_BOX_serialize(&mw_msg);
 	shm_put_outgoing(&mw_msg);	
 
+	rth_failsafe = 0;
+
 	return 0;
 }
 
@@ -146,8 +148,8 @@ void mw_end() {
 
 void initiate_failsafe() {
 	uint8_t fallback = 1;
-	if (rth_failsafe && has_homepos) fallback = mw_rth_start();
-	
+	if (rth_failsafe && has_homepos) fallback = mw_rth_start(); //fallback will be 0 if RTH successfully initiated
+
 	if (fallback) failsafe = 1;
 }
 
@@ -391,6 +393,10 @@ void mw_get_rth_alt(uint16_t *alt) {
 
 	(*alt) = nav.rth_altitude;
 	printf("RTH %u\n",*alt);
+}
+
+void mw_set_rth(uint8_t v) {
+	rth_failsafe = v;
 }
 
 void mw_set_rth_alt(uint16_t *alt) {
