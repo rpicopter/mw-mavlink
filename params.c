@@ -105,7 +105,7 @@ static void _set_value(uint8_t component, uint8_t id, mavlink_param_union_t *v) 
 #include "udp.h"
 
 uint8_t rpicam_debug = 1;
-#define CAM_CMD "/usr/local/bin/camera_streamer.sh"
+
 char rpicmd[256];
 uint8_t rpicam_mode = 0;
 uint8_t rpicam_on = 0;
@@ -165,7 +165,7 @@ void system_set(uint8_t* _value) {
 	int ret = 0;
 	switch (*_value) {
 		case 1: //reboot;
-			ret = system("/sbin/reboot &");
+			ret = system(REBOOT_CMD);
 			break;
 		case 2: //sync;
 			ret = system("/bin/sync");

@@ -11,10 +11,12 @@ Requirements
 - mw-service
 - mw-config (for autostart)
 - build tools (autotools, libtool, automake)
+- libconfig (optional but recommended)
 
 Installation
 ==============
 - ./autogen.sh
+- ./configure --with-config (Build with support for saving configuration (requires libconfig))
 - make & sudo make install
 
 Running & Testing
