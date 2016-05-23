@@ -16,10 +16,10 @@ Requirements
 Installation
 ==============
 - ./autogen.sh
-- ./configure --with-config (Build with support for saving configuration (requires libconfig))
 - make & sudo make install
 
 Running & Testing
 ==============
 - run mw-mavlink (this will be started automatically if using mw-config)
 - run QGroundControl and setup commlink to the IP of your quadcopter
+
