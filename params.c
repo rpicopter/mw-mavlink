@@ -45,6 +45,7 @@ struct s_param {
 static struct s_param *param;
 
 uint8_t params_count();
+void params_cfg_save();
 
 static struct s_param *_get_param(uint8_t component, uint8_t id) {
 	uint8_t i;
@@ -167,7 +168,8 @@ void system_set(uint8_t* _value) {
 		case 1: //reboot;
 			ret = system(REBOOT_CMD);
 			break;
-		case 2: //sync;
+		case 2: //save & sync;
+			params_cfg_save();
 			ret = system("/bin/sync");
 			break;
 	}
@@ -199,8 +201,7 @@ uint8_t params_count() {
 	if (ret) return ret;
 
 	ret = mw_pid_count()
-		+ mw_box_count() //gamepad_mapping
-		+ 1 //gamepad_mapping
+		+ gamepad_button_count()
 		+ 1 //gamepad_mode
 		+ 3 //gamepad_threshold
 		+ 1 //rth on connection loss
@@ -366,16 +367,9 @@ void params_init() {
 	}
 	offset += i;
 
-	/*
-		we link gamepad buttons to boxes 
-	*/
-	for (i=0;i<mw_box_count();i++) {
+	for (i=0;i<gamepad_button_count();i++) {
 		param[i+offset].component = 201;
-		ptr = mw_get_box_name(i);
-		if (mw_box_is_supported(i)) 
-			sprintf(param[i+offset].name,"BTN_%s",ptr);
-		else
-			sprintf(param[i+offset].name,"~BTN_%s",ptr);
+		sprintf(param[i+offset].name,"%s",gamepad_get_button_name(i));
 		param[i+offset].idx = i;
 		param[i+offset].get_value = (t_param_get)gamepad_get_mapping;
 		param[i+offset].set_value = (t_param_set)gamepad_set_mapping;
@@ -384,19 +378,12 @@ void params_init() {
 	offset += i;
 
 	param[offset].component = 201;
-	sprintf(param[offset].name,"%s","BTN_THROT_OFF");
-	param[offset].idx = i;
-	param[offset].get_value = (t_param_get)gamepad_get_mapping;
-	param[offset].set_value = (t_param_set)gamepad_set_mapping;
-	param[offset].can_save = 1;
-	offset += 1;
-
-	param[offset].component = 201;
 	sprintf(param[offset].name,"%s","!GAMEPAD_MODE");
 	param[offset].get_value = (t_param_get)gamepad_get_mode;
 	param[offset].set_value = (t_param_set)gamepad_set_mode;
 	param[offset].can_save = 1;
 	offset += 1;
+
 
 	param[offset].component = 201;
 	sprintf(param[offset].name,"%s","!SYS");
@@ -412,7 +399,7 @@ void params_init() {
 #endif
 
 	param[offset].component = 202;
-	sprintf(param[offset].name,"%s%s",(mw_get_box_id("GPS HOME")==UINT8_MAX?"~":"!"),"FAILSAFE");
+	sprintf(param[offset].name,"%s%s",(mw_box_is_supported(BOXGPSHOME)?"!":"~"),"RTH_FAILSAFE");
 	param[offset].get_value = (t_param_get)failsafe_get;
 	param[offset].set_value = (t_param_set)failsafe_set;
 	param[offset].can_save = 1;

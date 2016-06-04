@@ -29,7 +29,7 @@ void mw_get_homepos(int32_t *lat, int32_t *lon, int32_t *alt);
 
 uint8_t mw_box_count();
 char *mw_get_box_name(uint8_t id);
-uint8_t mw_get_box_id(const char *name);
+//uint8_t mw_get_box_id(const char *name);
 uint8_t mw_box_is_supported(uint8_t id);
 
 uint8_t mw_pid_refresh(uint8_t reset);
@@ -58,9 +58,12 @@ uint8_t mw_type();
 uint8_t mw_mode_flag();
 uint8_t mw_state();
 
+void initiate_failsafe();
+uint8_t is_mode_rth();
+uint8_t is_mode_baro();
 uint8_t mw_rth_start();
 void mw_toggle_box(uint8_t i);
-void mw_box_activate(uint8_t i);
-void mw_box_deactivate(uint8_t i);
+uint8_t mw_box_activate(uint8_t i);
+uint8_t mw_box_deactivate(uint8_t i);
 
 #endif

@@ -1,5 +1,6 @@
 
 #include "mw.h"
+#include "global.h"
 #include <mw/shm.h>
 #include <stdio.h>
 #include <math.h>
@@ -10,7 +11,8 @@
 
 #define MW_TIMEOUT 3 //3s timeout for mw
 static uint8_t mw_status=0; //0-standby, 1-armed; 2-no connection?
-static uint8_t failsafe=0;
+static uint8_t suppress_rc=0;
+static uint16_t failsafe=0;
 static uint8_t rth_failsafe=0; //has rth as failsafe
 
 static uint8_t has_homepos=0;
@@ -31,6 +33,7 @@ void mw_box_refresh();
 void mw_feed_rc();
 void mw_standby();
 void mw_homepos_refresh();
+void do_failsafe();
 
 typedef void (*t_cb)();
 
@@ -40,16 +43,17 @@ struct _S_TASK {
 };
 typedef struct _S_TASK S_TASK;
 
-#define MAX_TASK 7 //6
+#define MAX_TASK 8
 
 static S_TASK task[MAX_TASK] = {
 	{1, mw_feed_rc}, //run every LOOP_MS (see global.h)
-	{4, mw_standby},
-	{20, mw_altitude_refresh},
-	{4, mw_attitude_refresh},
-	{20, mw_gps_refresh},
-	{40, mw_keepalive},
-	{40, mw_box_refresh}
+	{100/LOOP_MS, mw_standby},
+	{500/LOOP_MS, mw_altitude_refresh},
+	{100/LOOP_MS, mw_attitude_refresh},
+	{500/LOOP_MS, mw_gps_refresh},
+	{1000/LOOP_MS, mw_keepalive},
+	{1000/LOOP_MS, mw_box_refresh},
+	{500/LOOP_MS, do_failsafe} //ensure it runs every 500ms
 };
 
 
@@ -146,16 +150,41 @@ void mw_end() {
  	shm_client_end(); //close channel to mw-service	
 }
 
-void initiate_failsafe() {
-	uint8_t fallback = 1;
-	if (rth_failsafe && has_homepos) fallback = mw_rth_start(); //fallback will be 0 if RTH successfully initiated
+void do_failsafe() { //runs in a loop every 500ms
+	if (!failsafe) return; //failsafe not requested, do nothing
+	if (suppress_rc) return; //we are already waiting for MW failsafe 
 
-	if (fallback) failsafe = 1;
+	if (!rth_failsafe) { //do normal failsafe if no rth
+		suppress_rc = 1;
+		return;
+	}
+
+	if (failsafe>(30*2)) { //guard of 30sec for rth
+		suppress_rc = 1; //suppress_rc after 
+		return;
+	}
+	failsafe++; //failsafe increases every 500ms
+
+	if (!is_mode_rth()) {			
+		if (failsafe<(3*2) && (mw_rth_start()==0)); //try activate rth for 3sec
+		else { //if we exceeded timeout for RTH activation suppress_rc
+			suppress_rc = 1;
+			return;
+		}
+	}
+}
+
+void initiate_failsafe() {
+	if (failsafe) return; //failsafe already initiated, dont reset the counter
+	failsafe = 1;
 }
 
 void mw_feed_rc() {
 	//this is run from a loop
-	if ((rc_count==0) || (failsafe)) return; //dont feed manual_control if in failsafe
+	if (suppress_rc) return; //dont feed manual_control if in failsafe
+
+	if (rc_count==0) return; //dont feed rc if we have nothing to feed
+	
 	rc_count--;
 
 	mspmsg_SET_RAW_RC_serialize(&mw_msg,&rc);
@@ -170,6 +199,7 @@ void mw_standby() {
 	if (mw_status!=0) return; //not in standby
 
 	failsafe = 0;
+	suppress_rc = 0;
 	mw_homepos_refresh();
 }
 
@@ -526,12 +556,12 @@ char *mw_get_box_name(uint8_t id) { //gets name of box based on id (for supporte
 	return msp_get_boxname(id);
 }
 
-uint8_t mw_get_box_id(const char *name) {
+/*uint8_t mw_get_box_id(const char *name) {
 	uint8_t ret;
 	ret = msp_get_boxid(name);
 	if (ret==UINT8_MAX) return UINT8_MAX;
 	return ret;
-}
+}*/
 
 uint8_t mw_box_is_supported(uint8_t id) {
 	return boxconf.supported[id];
@@ -666,11 +696,9 @@ uint8_t mw_mode_flag() {
 
 	uint8_t ret = 0;
 	if (msp_is_armed(&status)) ret |= (MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED);
-	if (boxconf.value[BOXBARO] || boxconf.value[BOXGPSHOLD]) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
-	if (boxconf.value[BOXGPSHOME]) ret |= MAV_MODE_FLAG_AUTO_ENABLED;
-	if (boxconf.value[BOXGPSNAV]) ret |= MAV_MODE_FLAG_GUIDED_ENABLED;
-
-	if (failsafe) ret = (MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_GUIDED_ENABLED | MAV_MODE_FLAG_STABILIZE_ENABLED);
+	if (msp_is_boxactive(&status,&boxconf,BOXBARO) || msp_is_boxactive(&status,&boxconf,BOXHORIZON)) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
+	if (msp_is_boxactive(&status,&boxconf,BOXGPSHOME)) ret |= MAV_MODE_FLAG_AUTO_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED;
+	if (msp_is_boxactive(&status,&boxconf,BOXGPSNAV)) ret |= MAV_MODE_FLAG_AUTO_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED;
 	
 	return ret;
 }
@@ -718,43 +746,73 @@ uint8_t mw_type() {
 	}
 }
 
-uint8_t mw_rth_start() {
+uint8_t is_mode_rth() {
+	struct S_MSP_STATUS status;
+
+	shm_get_incoming(&mw_msg,MSP_STATUS);
+	mspmsg_STATUS_parse(&status,&mw_msg);
+
+	if (msp_is_boxactive(&status,&boxconf,BOXHORIZON)==0) return 0;
+
+	if (msp_is_boxactive(&status,&boxconf,BOXGPSHOME)==0) return 0;
+
+	return 1;
+}
+
+uint8_t is_mode_baro() {
+	struct S_MSP_STATUS status;
+
+	shm_get_incoming(&mw_msg,MSP_STATUS);
+	mspmsg_STATUS_parse(&status,&mw_msg);
+
+	if (msp_is_boxactive(&status,&boxconf,BOXBARO)==0) return 0;	
+
+	return 1;
+}
+
+uint8_t mw_rth_start() { //alt hold (baro mode) is activated through GPSHOME
 	if (!has_homepos) return 1;
-	uint8_t rth_box = mw_get_box_id("GPS HOME");
-	if (rth_box==UINT8_MAX) return 2; //RTH not availble
-	mw_box_activate(rth_box);
+
+	if (!boxconf.supported[BOXHORIZON]) return 1;
+	if (!boxconf.supported[BOXGPSHOME]) return 1;
+
+	boxconf.value[BOXHORIZON] = 0xFFFF;
+	boxconf.value[BOXGPSHOME] = 0xFFFF;
+
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
 
 	return 0;
 }	
 
-void mw_box_activate(uint8_t i) {
+uint8_t mw_box_activate(uint8_t i) {
 	if (!boxconf.supported[i]) {
 		printf("BOX %u not supported\n",i);
-		return;
+		return 1;
 	}
 
 	boxconf.value[i] = 0xFFFF;
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
+
+	return 0;
 }
 
-void mw_box_deactivate(uint8_t i) {
+uint8_t mw_box_deactivate(uint8_t i) {
 	if (!boxconf.supported[i]) {
 		printf("BOX %u not supported\n",i);
-		return;
+		return 1;
 	}
 
 	boxconf.value[i] = 0;
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
+
+	return 0;
 }
 
-
-uint8_t mw_box_is_active(uint8_t i) {
-	return boxconf.value[i]?1:0;
-}
 
 void mw_toggle_box(uint8_t i) {
-	if (mw_box_is_active(i)) mw_box_deactivate(i);
+	if (boxconf.value[i]) mw_box_deactivate(i);
 	else mw_box_activate(i);
 }

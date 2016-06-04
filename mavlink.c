@@ -311,15 +311,10 @@ void msg_manual_control(mavlink_message_t *msg) {
 
 	if (btn!=old_btn) {
 
-		for (i=0;i<mw_box_count();i++) { //check for box buttons
+		for (i=0;i<gamepad_button_count();i++) {
 			gamepad_get_mapping(&btn_mapping,i);
-			if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { mw_toggle_box(i); }
+			if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { gamepad_button_pressed(i); }
 		}
-
-		//check for throttle low button
-		gamepad_get_mapping(&btn_mapping,i);
-
-		if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { gamepad_control_reset_throttle(); } 	
 
 		old_btn = btn;
 	}

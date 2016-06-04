@@ -20,4 +20,9 @@ void gamepad_get_threshold(uint8_t *value, uint8_t i);
 void gamepad_control_calculate(int16_t *throttle, int16_t *yaw, int16_t *pitch, int16_t *roll);
 void gamepad_control_reset_throttle();
 
+uint8_t gamepad_button_count();
+const char* gamepad_get_button_name(uint8_t i);
+void gamepad_button_pressed(uint8_t i);
+void gamepad_update_trim(uint8_t _trim, int8_t delta);
+
 #endif
