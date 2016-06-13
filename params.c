@@ -178,18 +178,24 @@ void system_set(uint8_t* _value) {
 }
 
 static uint8_t failsafe_mode = 0;
-
-uint8_t failsafe_rth() {
-	return failsafe_mode;
-}
+static uint8_t failsafe_timeout = 0;
 
 void failsafe_set(uint8_t *_value) {
 	failsafe_mode = (*_value);
-	mw_set_rth(failsafe_mode);
+	mw_set_failsafe(failsafe_mode);
 }
 
 void failsafe_get(uint8_t *_value) {
 	(*_value) = failsafe_mode;
+}
+
+void failsafe_timeout_set(uint8_t *_value) {
+	failsafe_timeout = (*_value);
+	mw_set_failsafe_timeout(failsafe_timeout);
+}
+
+void failsafe_timeout_get(uint8_t *_value) {
+	(*_value) = failsafe_timeout;
 }
 
 //============================================
@@ -204,7 +210,7 @@ uint8_t params_count() {
 		+ gamepad_button_count()
 		+ 1 //gamepad_mode
 		+ 3 //gamepad_threshold
-		+ 1 //rth on connection loss
+		+ 2 //failsafe
 		+ 1 //reboot
 		+ 7 //rc_tunning
 #ifdef RPICAM_ENABLED		
@@ -212,7 +218,7 @@ uint8_t params_count() {
 #endif
 		+ 1 //eeprom save
 		+ 1 //rth_altitude
-		+ 1 //failsafe_throttle
+		+ 1 //failsafe_throttle //part of misc
 		;
 
 	return ret;
@@ -399,14 +405,21 @@ void params_init() {
 #endif
 
 	param[offset].component = 202;
-	sprintf(param[offset].name,"%s%s",(mw_box_is_supported(BOXGPSHOME)?"!":"~"),"RTH_FAILSAFE");
+	sprintf(param[offset].name,"%s","!FS");
 	param[offset].get_value = (t_param_get)failsafe_get;
 	param[offset].set_value = (t_param_set)failsafe_set;
 	param[offset].can_save = 1;
 	offset += 1;
 
 	param[offset].component = 202;
-	sprintf(param[offset].name,"%s","FAILSAFE_THROT");
+	sprintf(param[offset].name,"%s","!FS_TIMEOUT");
+	param[offset].get_value = (t_param_get)failsafe_timeout_get;
+	param[offset].set_value = (t_param_set)failsafe_timeout_set;
+	param[offset].can_save = 1;
+	offset += 1;
+
+	param[offset].component = 202;
+	sprintf(param[offset].name,"%s","FS_THROT");
 	param[offset].get_value = (t_param_get)mw_get_failsafe_throttle;
 	param[offset].set_value = (t_param_set)mw_set_failsafe_throttle;
 	param[offset].type = MAV_PARAM_TYPE_UINT16;

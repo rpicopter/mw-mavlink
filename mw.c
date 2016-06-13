@@ -13,16 +13,20 @@
 static uint8_t mw_status=0; //0-standby, 1-armed; 2-no connection?
 static uint8_t suppress_rc=0;
 static uint16_t failsafe=0;
-static uint8_t rth_failsafe=0; //has rth as failsafe
+static uint8_t failsafe_mode=0;
+static uint8_t failsafe_timeout=0;
+
+static uint8_t panic = 0;
 
 static uint8_t has_homepos=0;
 static struct S_MSP_WP homepos;
+static int16_t heading_initial=0;
 
 static struct S_MSG mw_msg;
 static struct S_MSP_BOXCONFIG boxconf;
 static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
 
-#define RC_TIMEOUT 40 //1.5sec timeout for manual_control (see main loop for manual_control handling)
+#define RC_TIMEOUT 1000/LOOP_MS //1sec timeout for manual_control (see main loop for manual_control handling)
 static uint8_t rc_count;
 
 void mw_keepalive();
@@ -34,7 +38,7 @@ void mw_feed_rc();
 void mw_standby();
 void mw_homepos_refresh();
 void do_failsafe();
-
+void mw_panic();
 typedef void (*t_cb)();
 
 struct _S_TASK {
@@ -43,10 +47,11 @@ struct _S_TASK {
 };
 typedef struct _S_TASK S_TASK;
 
-#define MAX_TASK 8
+#define MAX_TASK 9
 
 static S_TASK task[MAX_TASK] = {
 	{1, mw_feed_rc}, //run every LOOP_MS (see global.h)
+	{100/LOOP_MS, mw_panic}, //run every X miliseconds
 	{100/LOOP_MS, mw_standby},
 	{500/LOOP_MS, mw_altitude_refresh},
 	{100/LOOP_MS, mw_attitude_refresh},
@@ -141,7 +146,7 @@ uint8_t mw_init() {
 	mspmsg_BOX_serialize(&mw_msg);
 	shm_put_outgoing(&mw_msg);	
 
-	rth_failsafe = 0;
+	failsafe_mode = 0;
 
 	return 0;
 }
@@ -151,38 +156,69 @@ void mw_end() {
 }
 
 void do_failsafe() { //runs in a loop every 500ms
-	if (!failsafe) return; //failsafe not requested, do nothing
-	if (suppress_rc) return; //we are already waiting for MW failsafe 
+	if (!failsafe) {
+		return; //failsafe not requested, do nothing
+	} 
 
-	if (!rth_failsafe) { //do normal failsafe if no rth
-		suppress_rc = 1;
+	mw_panic_stop();
+
+	suppress_rc = 1; //panic_stop might un-suppress_rc
+
+
+	
+	if (failsafe_mode==0) { //default behaviour - as per MW config
+		rc_count = 0; //not needed, just makes the failsafe kick in
 		return;
 	}
 
-	if (failsafe>(30*2)) { //guard of 30sec for rth
-		suppress_rc = 1; //suppress_rc after 
+	if (failsafe>=(failsafe_timeout*2)) { //guard for all other types of failsafe
+		rc_count = 0; //back to default behaviour
 		return;
-	}
-	failsafe++; //failsafe increases every 500ms
+	} 
 
-	if (!is_mode_rth()) {			
-		if (failsafe<(3*2) && (mw_rth_start()==0)); //try activate rth for 3sec
-		else { //if we exceeded timeout for RTH activation suppress_rc
-			suppress_rc = 1;
+	rc_count = (1100/LOOP_MS); //1.1sec for rc_count
+	failsafe++; //failsafe increases every 500ms	
+
+	if (failsafe_mode==1) { //switch motors off
+		if (mw_status==1) mw_disarm(); //extra thing
+		failsafe=(failsafe_timeout*2);
+	} else if (failsafe_mode==2) { //do rth
+
+		if (!is_mode_rth() && failsafe>=(3*2)) { //we should be in rth mode but we are not after 3 sec
+			rc_count = 0; //default to MW failsafe
 			return;
+		} 
+
+		if (!is_mode_rth()) { //otherwise try to set rth 
+
+			if (mw_rth_start()!=0) { //activate rth;
+				rc_count = 0; //if failed default to MW failsafe
+				return; //rth activate failed (not supported)
+			}
 		}
 	}
 }
 
-void initiate_failsafe() {
+void failsafe_initiate() {
 	if (failsafe) return; //failsafe already initiated, dont reset the counter
 	failsafe = 1;
 }
 
+void failsafe_reset() {
+	failsafe = 0;
+	suppress_rc = 0;
+	rc.yaw = rc.pitch = rc.roll = rc.aux1 = rc.aux2 = rc.aux3 = rc.aux4 = 1500;	
+	boxconf.value[BOXHORIZON] = 0;
+	boxconf.value[BOXGPSHOME] = 0;
+	boxconf.value[BOXGPSHOLD] = 0;
+	boxconf.value[BOXBARO] = 0;
+
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+}
+
 void mw_feed_rc() {
 	//this is run from a loop
-	if (suppress_rc) return; //dont feed manual_control if in failsafe
-
 	if (rc_count==0) return; //dont feed rc if we have nothing to feed
 	
 	rc_count--;
@@ -191,7 +227,7 @@ void mw_feed_rc() {
 	shm_put_outgoing(&mw_msg);
 
 	if (rc_count==0) { //rc has just timed-out 
-		initiate_failsafe();
+		failsafe_initiate();
 	}
 }
 
@@ -201,6 +237,13 @@ void mw_standby() {
 	failsafe = 0;
 	suppress_rc = 0;
 	mw_homepos_refresh();
+
+	//attitude is getting monitored in standby anyway so take the heading
+	struct S_MSP_ATTITUDE attitude;
+	
+	shm_get_incoming(&mw_msg,MSP_ATTITUDE);
+	mspmsg_ATTITUDE_parse(&attitude,&mw_msg);
+	heading_initial = attitude.heading;
 }
 
 /* ============== REFRESH FUNCTIONS ==============  */
@@ -425,8 +468,12 @@ void mw_get_rth_alt(uint16_t *alt) {
 	printf("RTH %u\n",*alt);
 }
 
-void mw_set_rth(uint8_t v) {
-	rth_failsafe = v;
+void mw_set_failsafe(uint8_t v) {
+	failsafe_mode = v;
+}
+
+void mw_set_failsafe_timeout(uint8_t v) {
+	failsafe_timeout = v;
 }
 
 void mw_set_rth_alt(uint16_t *alt) {
@@ -473,14 +520,13 @@ void mw_set_failsafe_throttle(uint16_t* throttle) {
 }
 
 void mw_manual_control(int16_t throttle, int16_t yaw, int16_t pitch, int16_t roll) {
-
+	if (suppress_rc) return;
 	rc.throttle = throttle;
 	rc.yaw = yaw;
 	rc.roll = roll;
 	rc.pitch = pitch;
 
 	rc_count = RC_TIMEOUT; 
-
 }
 
 
@@ -771,6 +817,11 @@ uint8_t is_mode_baro() {
 }
 
 uint8_t mw_rth_start() { //alt hold (baro mode) is activated through GPSHOME
+
+	//stabilize
+	rc.yaw = rc.pitch = rc.roll = rc.aux1 = rc.aux2 = rc.aux3 = rc.aux4 = 1500;	
+//	rc.throttle = 
+//send rc before box as boxgpshome uses current throttle otherwise the current throttle will be used
 	if (!has_homepos) return 1;
 
 	if (!boxconf.supported[BOXHORIZON]) return 1;
@@ -778,12 +829,97 @@ uint8_t mw_rth_start() { //alt hold (baro mode) is activated through GPSHOME
 
 	boxconf.value[BOXHORIZON] = 0xFFFF;
 	boxconf.value[BOXGPSHOME] = 0xFFFF;
+	boxconf.value[BOXGPSHOLD] = 0;
 
 	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
 	shm_put_outgoing(&mw_msg);	
 
 	return 0;
 }	
+
+uint8_t mw_hold_start() {
+	//stabilize
+	rc.yaw = rc.pitch = rc.roll = rc.aux1 = rc.aux2 = rc.aux3 = rc.aux4 = 1500;	
+//	rc.throttle = 
+//send rc before box as boxbaro uses current throttle otherwise the current throttle will be used
+	if (!boxconf.supported[BOXHORIZON]) return 1;
+	if (!boxconf.supported[BOXGPSHOLD]) return 1;
+
+	boxconf.value[BOXBARO] = 0xFFFF;
+	boxconf.value[BOXHORIZON] = 0xFFFF;
+	boxconf.value[BOXGPSHOLD] = 0xFFFF;
+	boxconf.value[BOXGPSHOME] = 0;
+
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);	
+
+	return 0;	
+}
+
+void mw_panic_start() {
+	if (failsafe) return;
+	panic = 1;
+}
+
+void mw_panic_stop() {
+	if (!panic) return;
+
+	suppress_rc = 0;
+
+	rc.throttle = 1475;
+
+	boxconf.value[BOXBARO] = 0;
+	boxconf.value[BOXGPSHOLD] = 0;
+
+	panic = 0;
+}
+
+void mw_panic() { //this runs every 100ms
+	static uint8_t counter = 0;
+	if (!panic) {
+		counter = 0;
+		return;
+	}
+
+	if (counter<5) {
+		//stabilize
+		rc.yaw = rc.pitch = rc.roll = rc.aux1 = rc.aux2 = rc.aux3 = rc.aux4 = 1500;
+		rc.throttle = 1600; //with some excessive throttle
+
+		//suppress user manual control as otherwise our throttle will be overwritten
+		suppress_rc = 1;
+		rc_count = 3500/LOOP_MS; //3.5sec
+
+		boxconf.value[BOXHORIZON] = 0xFFFF;
+		mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+		shm_put_outgoing(&mw_msg);	
+
+		mspmsg_SET_HEAD_serialize(&mw_msg,heading_initial);
+		shm_put_outgoing(&mw_msg);
+	} else if (counter==25) { //after 2 sec set throttle to hover
+		rc.throttle = 1475;
+	} else if (counter==30) { //after another sec activate baro and gpshold
+		mw_hold_start();
+	}
+
+	counter++;
+
+	if (counter>30) {
+		suppress_rc = 0;
+		panic = 0;
+		counter = 0;
+	}
+
+}
+
+void mw_box_reset() {
+	uint8_t i;
+	for (i=0;i<CHECKBOXITEMS;i++)
+		boxconf.value[i] = 0;
+
+	mspmsg_SET_BOX_serialize(&mw_msg,&boxconf);
+	shm_put_outgoing(&mw_msg);		
+}
 
 uint8_t mw_box_activate(uint8_t i) {
 	if (!boxconf.supported[i]) {

@@ -5,7 +5,7 @@
 
 #define TRIMDELTA 5
 
-#define BUTTONS_COUNT CHECKBOXITEMS+2+4 //+1 for reset_throttle, +1 for test mapping + 4 for trims
+#define BUTTONS_COUNT CHECKBOXITEMS+3+4 //+1 for reset_throttle, +1 for test mapping +1 failsafe_Reset + 4 for trims
 
 static uint8_t mapping[BUTTONS_COUNT]; 
 static uint8_t threshold[3]; //yaw, pitch, roll
@@ -15,6 +15,7 @@ static int8_t trim[2]; //0: trim_roll; 1: _pitch,
 	MODE 1: absolute control
 */
 static uint8_t mode; 
+static int16_t throttle = 1000;
 
 void gamepad_init() {
 	uint8_t i;
@@ -48,6 +49,8 @@ const char* gamepad_get_button_name(uint8_t i) {
 
 	if (i-c++==0) return "BTN_TEST";
 
+	if (i-c++==0) return "BTN_FS_RST";
+
 	if (i-c++==0) return "BTN_TRIM_L";
 
 	if (i-c++==0) return "BTN_TRIM_R";
@@ -68,19 +71,22 @@ void gamepad_button_pressed(uint8_t i) { //i -
 	}
 	c=CHECKBOXITEMS;
 
-	if (i-c++==0) {	gamepad_control_reset_throttle(); return; }
+	if (i-c++==0) {	gamepad_control_reset_throttle(); return; } //BTN_THROT_OFF
 
-	//if (i-c++==0) {	mw_rth_start(); return; }
+	if (i-c++==0) {	 //BTN_TEST
+		mw_panic_start();
+		//mw_disarm();
+	}
 
-	if (i-c++==0) {	initiate_failsafe(); return; }
+	if (i-c++==0) {	failsafe_reset(); return; } //BTN_FS_RST
 
-	if (i-c<2) {
+	if (i-c<2) { //BTN_TRIM_L & _R
 		gamepad_update_trim(0,i-c==0?-TRIMDELTA:TRIMDELTA); 
 		return;
 	}
 	c+=2;
 
-	if (i-c<2) {
+	if (i-c<2) { //BTN_TRIM_U & _D
 		gamepad_update_trim(1,i-c==0?TRIMDELTA:-TRIMDELTA); 
 		return;
 	}
@@ -117,8 +123,6 @@ int32_t constrain(int32_t v, int32_t min, int32_t max) {
 	return v;
 }
 
-static int16_t throttle = 1000;
-
 void gamepad_update_trim(uint8_t _trim, int8_t delta) { //0 -roll, 1- pitch
 	int16_t tmp;
 	tmp = trim[_trim] + delta;
@@ -132,9 +136,9 @@ void gamepad_control_reset_throttle() {
 	trim[0] = 0;
 	trim[1] = 0;
 
-	for (i=0;i<mw_box_count();i++) { //check for box buttons
-		mw_box_deactivate(i);
-	}	
+	mw_box_reset();
+
+	mw_disarm();
 }
 
 void gamepad_control_calculate(int16_t *_throttle, int16_t *_yaw, int16_t *_pitch, int16_t *_roll) {
@@ -149,9 +153,9 @@ void gamepad_control_calculate(int16_t *_throttle, int16_t *_yaw, int16_t *_pitc
 	(*_throttle)-=500; //mid is 0, -500, 500
 
 	if (mode==0) {
-		if (is_mode_baro()) { //max throttle: +100, min throttle: -100 temporaily
-			if (*_throttle==-500) throttle_mod = -100;
-			if (*_throttle==500) throttle_mod = 100;
+		if (is_mode_baro()) { //max throttle: +150, min throttle: -150 temporaily
+			if (*_throttle==-500) throttle_mod = -150;
+			if (*_throttle==500) throttle_mod = 150;
 		} else throttle += (*_throttle)/30; 
 	}
 	else throttle = 1000+(*_throttle)*2; //mode = 1

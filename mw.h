@@ -46,7 +46,8 @@ char *mw_get_rc_tunning_name(uint8_t i);
 void mw_get_rc_tunning(uint8_t* v, uint8_t id);
 void mw_set_rc_tunning(uint8_t* v, uint8_t id);
 
-void mw_set_rth(uint8_t v);
+void mw_set_failsafe(uint8_t v);
+void mw_set_failsafe_timeout(uint8_t v);
 void mw_get_rth_alt(uint16_t* alt);
 void mw_set_rth_alt(uint16_t* alt);
 
@@ -58,10 +59,15 @@ uint8_t mw_type();
 uint8_t mw_mode_flag();
 uint8_t mw_state();
 
-void initiate_failsafe();
+void failsafe_initiate();
+void failsafe_reset();
 uint8_t is_mode_rth();
 uint8_t is_mode_baro();
 uint8_t mw_rth_start();
+uint8_t mw_hold_start();
+void mw_panic_start();
+void mw_panic_stop();
+void mw_box_reset();
 void mw_toggle_box(uint8_t i);
 uint8_t mw_box_activate(uint8_t i);
 uint8_t mw_box_deactivate(uint8_t i);
