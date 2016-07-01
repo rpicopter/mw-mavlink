@@ -43,7 +43,9 @@ void udp_init(const char *target, const int target_port, const int local_port) {
 		perror("error bind failed");
 		close(sock);
 		exit(EXIT_FAILURE);
-    } 
+    } else {
+    	printf("UDP initialized on port: %i\n",local_port);
+    }
  
 	/* Attempt to make it non blocking */
 	if (fcntl(sock, F_SETFL, O_NONBLOCK | FASYNC) < 0)
@@ -57,7 +59,9 @@ void udp_init(const char *target, const int target_port, const int local_port) {
 	memset(&gcAddr, 0, sizeof(gcAddr));
 	gcAddr.sin_family = AF_INET;
 	gcAddr.sin_addr.s_addr = inet_addr(target);
-	gcAddr.sin_port = htons(target_port);	
+	gcAddr.sin_port = htons(target_port);
+
+	printf("GC address: %s:%i\n",inet_ntoa(gcAddr.sin_addr),target_port);
 }
 
 void udp_send(mavlink_message_t *mavlink_msg) {
@@ -69,8 +73,8 @@ uint8_t udp_recv(mavlink_message_t *msg) {
 	static ssize_t recsize;
 	static socklen_t fromlen;
 	static int i = 0;
-	static unsigned int temp = 0;
 	static mavlink_status_t status;
+	//static unsigned int temp = 0;
 	//struct sockaddr_in gcAddr;
 
 	memset(buf, 0, BUFFER_LENGTH);
@@ -82,7 +86,7 @@ uint8_t udp_recv(mavlink_message_t *msg) {
 		//printf("Received packet from: %s\n",inet_ntoa(gcAddr.sin_addr));
 		for (i = 0; i < recsize; ++i)
 		{
-			temp = buf[i];
+			//temp = buf[i];
 			//printf("%02x ", (unsigned char)temp);
 			if (mavlink_parse_char(MAVLINK_COMM_0, buf[i], msg, &status))
 			{
@@ -98,5 +102,12 @@ uint8_t udp_recv(mavlink_message_t *msg) {
 
 void udp_close() {
 	close(sock);
+}
+
+char * get_gc_ip() {
+	static char ip[16];
+	sprintf(ip,"%s",inet_ntoa(gcAddr.sin_addr));
+
+	return ip;
 }
 

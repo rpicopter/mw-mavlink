@@ -8,78 +8,76 @@
 #include <sys/time.h>
 
 static uint8_t debug = 0;
+static uint16_t manual_control_counter = 0;
+static uint64_t current_time; //ms
 
-static uint8_t loop_counter = 0;
-
-typedef uint8_t (*t_cb)(uint8_t);
-t_cb loop_callback; //we use loop_callback to send certain messages with a delay
+typedef uint8_t (*t_cb_i)(uint8_t);
+t_cb_i loop_callback; //we use loop_callback to send certain messages with a delay
 
 static mavlink_message_t mav_msg;
 
 
-//defines list of active messages
-const uint8_t active_mav_msg[] = {
-	MAVLINK_MSG_ID_HEARTBEAT,
-	MAVLINK_MSG_ID_SYS_STATUS,
-	MAVLINK_MSG_ID_RADIO_STATUS,
-	MAVLINK_MSG_ID_GPS_RAW_INT,
-	MAVLINK_MSG_ID_ATTITUDE_QUATERNION
+void msg_sys_status();
+void msg_radio_status();
+void msg_heartbeat();
+void msg_gps_raw_int();
+void msg_altitude();
+void msg_global_position_int();
+void msg_attitude_quaternion();
+void msg_home_position();
+
+typedef void (*t_cb)();
+
+struct _S_TASK {
+	uint16_t freq; //has to be less than loop_counter max value
+	t_cb cb_fn;
 };
+typedef struct _S_TASK S_TASK;
 
-static uint8_t is_msg_active(uint8_t msg_id) {
-	uint8_t i;
-	for (i=0;i<sizeof(active_mav_msg);i++)
-		if (active_mav_msg[i] == msg_id) return 1;
+#define MAX_TASK 7
 
-	return 0;
-}
+static S_TASK task[MAX_TASK] = {
+	{4, msg_attitude_quaternion}, //run every LOOP_MS (see global.h)
+	{40, msg_gps_raw_int},
+	{20, msg_global_position_int},
+	{40, msg_heartbeat},
+	{40, msg_sys_status},
+	{40, msg_radio_status},	
+	{80, msg_home_position}
+};
 
 uint64_t microsSinceEpoch()
 {
- 
 	struct timeval tv;
- 
 	uint64_t micros = 0;
- 
 	gettimeofday(&tv, NULL);  
 	micros =  ((uint64_t)tv.tv_sec) * 1000000 + tv.tv_usec;
- 
 	return micros;
 }
 
-void printBits(unsigned int num)
-{
-		int bit;
-   for(bit=0;bit<(sizeof(unsigned int) * 8); bit++)
-   {
-      printf("%i ", num & 0x01);
-      num = num >> 1;
-   }
-}
-
-uint8_t mavlink_init() {
-	params_init();
-	return 0;
-}
-
-void mavlink_end() {
-	params_end();
-}
-
 void mavlink_loop() {
+	static uint8_t counter = 0;
+	uint8_t i;
 
-	//send default messages
-	if (loop_counter%4==0) msg_attitude_quaternion();  //every 100ms
-	if (loop_counter%40==0) msg_gps_raw_int(); //every sec
-	if (loop_counter%40==0) msg_heartbeat(); //every sec
-	if (loop_counter%40==0) msg_sys_status(); //every sec
-	if (loop_counter%40==0) msg_radio_status(); //every sec
+	current_time = microsSinceEpoch();
+
+	for (i=0;i<MAX_TASK;i++)
+		if (counter%task[i].freq==0) {
+			task[i].cb_fn();
+		}
 
 	//callbacks etc
 	if (loop_callback) if (loop_callback(0)) loop_callback = NULL;
 
-	loop_counter++;
-	if (loop_counter==100) loop_counter=0;
+	counter++;
+	if (counter==100) counter=0;
+}
+
+uint8_t mavlink_init() {
+	return 0;
+}
+
+void mavlink_end() {
 }
 
 void mav_cmd_arm_disarm(mavlink_message_t *msg) {
@@ -114,7 +112,7 @@ void msg_param_set(mavlink_message_t *msg) {
 	float value;
 
 	component = mavlink_msg_param_set_get_target_component(msg);
-	mavlink_msg_param_set_get_param_id(msg,name); //get pid name from the message
+	mavlink_msg_param_set_get_param_id(msg,name); //get name from the param
 	value = mavlink_msg_param_set_get_param_value(msg);
 
 	printf("Set id: %s\n",name);
@@ -128,7 +126,8 @@ void msg_param_request_read(mavlink_message_t *msg) {
 	component = mavlink_msg_param_request_read_get_target_component(msg);
 	idx = mavlink_msg_param_request_read_get_param_index(msg);
 
-	params_send(component,idx);
+	printf("Requesting param id: %i, component: %u\n",idx,component);
+	params_send(component,idx); //TODO: the idx has to be global, but idx is local?
 }
 
 void msg_param_request_list(mavlink_message_t *msg) {
@@ -145,8 +144,62 @@ uint8_t msg_mission_request_list(mavlink_message_t *msg) {
 	return 0;
 }
 
+void msg_altitude() {
+	int32_t alt;
+
+	mw_altitude(&alt);
+
+	mavlink_msg_altitude_pack(1,200, &mav_msg,
+		current_time,
+		0.f, //monotonic
+		0.f, //amsl
+		0.f, //local
+		alt, //relative 
+		0.f, //terrain
+		0.f //clearance
+	);
+
+	dispatch(&mav_msg);
+}
+
+void msg_home_position() {
+	static uint8_t position_set = 1;
+	if (mw_state()==MAV_STATE_STANDBY) position_set = 0; //set home_position only in standby mode
+
+	if (position_set) return;
+
+	int32_t lat = 0;
+	int32_t lon = 0;
+	int32_t alt = 0;
+
+	float dummy[4];
+
+	mw_get_homepos(&lat,&lon,&alt);
+
+	mavlink_msg_home_position_pack(1,200, &mav_msg,
+		lat,lon, alt*10.f, 0.f, 0.f, 0.f, dummy, 0.f, 0.f, 0.f
+	);
+}
+
+
+void msg_global_position_int() {
+	int32_t lat = 0;
+	int32_t lon = 0;
+	int32_t alt = 0;
+	int32_t ralt = 0;
+
+	mw_raw_gps(NULL, &lat, &lon, &alt, NULL, NULL, NULL);
+	mw_altitude(&ralt);
+
+	mavlink_msg_global_position_int_pack(1,200, &mav_msg,
+		current_time,
+		lat,lon, alt*10.f, ralt*10.f, 0.f, 0.f, 0.f, 0.f
+	);
+
+	dispatch(&mav_msg);
+}
+
 void msg_gps_raw_int() {
-	if (!is_msg_active(MAVLINK_MSG_ID_GPS_RAW_INT)) return;
 	uint8_t fix = 0;
 	int32_t lat = 0;
 	int32_t lon = 0;
@@ -157,21 +210,17 @@ void msg_gps_raw_int() {
 	uint16_t cog = 0;
 	uint8_t satellites_visible = 0;
 
-	mw_gps_refresh();
-
 	mw_raw_gps(&fix, &lat, &lon, &alt, &vel, &cog, &satellites_visible);
 
 	mavlink_msg_gps_raw_int_pack(1,200, &mav_msg,
-		microsSinceEpoch(),
-		fix,lat,lon, alt, eph, epv, vel, cog, satellites_visible
+		current_time,
+		fix,lat,lon, alt*10.f, eph, epv, vel, cog, satellites_visible
 	);
 
 	dispatch(&mav_msg);
 }
 
 void msg_radio_status() {
-	if (!is_msg_active(MAVLINK_MSG_ID_RADIO_STATUS)) return;
-
 	int8_t rssi,noise;
 
 	mw_get_signal(&rssi,&noise);
@@ -190,7 +239,13 @@ void msg_radio_status() {
 }
 
 void msg_sys_status() {
-	if (!is_msg_active(MAVLINK_MSG_ID_SYS_STATUS)) return;
+	static uint64_t prev_time = 0;
+
+	uint8_t dt_ms = (current_time - prev_time)/1000;
+	prev_time = current_time;
+
+
+
 	mavlink_msg_sys_status_pack(1, 200, &mav_msg,
 		mw_sys_status_sensors(), //present sensors
 		mw_sys_status_sensors(), //active sensors (assume all present are active for MW) //could use 0xFFFFFFFF ?
@@ -199,18 +254,20 @@ void msg_sys_status() {
 		11000, //voltage 11V
 		-1, //current
 		-1, //remaining
-		mw_get_comm_drop_rate(), //drop rate
-		mw_get_comm_drop_count(), //comm error count
-		0, 
-		0, 
-		0, 
-		0
+		0,//mav_drop_rate(), //drop rate
+		0,//mav_drop_count(), //comm error count
+		mw_get_i2c_drop_count(), //errors_count1
+		manual_control_counter, //errors_count2
+		dt_ms/1000, //errors_count3
+		0 //errors_count4
 	);
 	dispatch(&mav_msg);	
+
+	manual_control_counter = 0;
 }
 
 void msg_heartbeat() {
-	if (!is_msg_active(MAVLINK_MSG_ID_HEARTBEAT)) return;
+
 	mavlink_msg_heartbeat_pack(1, 200, &mav_msg, 
 		mw_type(),
 		MAV_AUTOPILOT_GENERIC,
@@ -222,14 +279,12 @@ void msg_heartbeat() {
 }
 
 void msg_attitude_quaternion() {
-	if (!is_msg_active(MAVLINK_MSG_ID_ATTITUDE_QUATERNION)) return;
 	float w,x,y,z;
-	mw_attitude_refresh();
 
 	mw_attitude_quaternions(&w, &x, &y, &z);
 
 	mavlink_msg_attitude_quaternion_pack(1,200, &mav_msg,
-		microsSinceEpoch(),
+		current_time,
 		w, x, y, z, 0.f, 0.f,0.f
 	);
 
@@ -238,12 +293,15 @@ void msg_attitude_quaternion() {
 
 void msg_manual_control(mavlink_message_t *msg) {
 	static uint16_t old_btn = 0;
+
+	manual_control_counter++;
+
 	uint16_t btn;
 	uint16_t i;
 	uint8_t btn_mapping;
 
 	int16_t t,y,p,r;
-
+	//TODO: check if msg timestamp is correct (>prev_timestamp)
 	t = mavlink_msg_manual_control_get_z(msg);
 	y = mavlink_msg_manual_control_get_r(msg);
 	p = mavlink_msg_manual_control_get_x(msg);
@@ -253,15 +311,10 @@ void msg_manual_control(mavlink_message_t *msg) {
 
 	if (btn!=old_btn) {
 
-		for (i=0;i<mw_box_count();i++) { //check for box buttons
-			btn_mapping = gamepad_get_mapping(i);
-			if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { mw_toggle_box(i); }
+		for (i=0;i<gamepad_button_count();i++) {
+			gamepad_get_mapping(&btn_mapping,i);
+			if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { gamepad_button_pressed(i); }
 		}
-
-		//check for throttle low button
-		btn_mapping = gamepad_get_mapping(i);
-
-		if (get_bit(old_btn,btn_mapping) && (get_bit(btn,btn_mapping)==0)) { gamepad_control_reset_throttle(); } 	
 
 		old_btn = btn;
 	}
