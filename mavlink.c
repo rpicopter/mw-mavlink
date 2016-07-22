@@ -241,9 +241,11 @@ void msg_radio_status() {
 void msg_sys_status() {
 	static uint64_t prev_time = 0;
 
+	uint16_t vbat = mw_get_battery_voltage();
+	uint16_t amp = mw_get_battery_amp();
+
 	uint8_t dt_ms = (current_time - prev_time)/1000;
 	prev_time = current_time;
-
 
 
 	mavlink_msg_sys_status_pack(1, 200, &mav_msg,
@@ -251,8 +253,8 @@ void msg_sys_status() {
 		mw_sys_status_sensors(), //active sensors (assume all present are active for MW) //could use 0xFFFFFFFF ?
 		mw_sys_status_sensors(), //error sensors (assume all are ok for MW) //could use 0xFFFFFFFF ?
 		500, //load 50%
-		11000, //voltage 11V
-		-1, //current
+		vbat*100, //voltage 11V
+		amp, //current
 		-1, //remaining
 		0,//mav_drop_rate(), //drop rate
 		0,//mav_drop_count(), //comm error count

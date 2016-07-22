@@ -34,6 +34,7 @@ void mw_altitude_refresh();
 void mw_attitude_refresh();
 void mw_gps_refresh();
 void mw_box_refresh();
+void mw_analog_refresh();
 void mw_feed_rc();
 void mw_standby();
 void mw_homepos_refresh();
@@ -47,7 +48,7 @@ struct _S_TASK {
 };
 typedef struct _S_TASK S_TASK;
 
-#define MAX_TASK 9
+#define MAX_TASK 10
 
 static S_TASK task[MAX_TASK] = {
 	{1, mw_feed_rc}, //run every LOOP_MS (see global.h)
@@ -58,6 +59,7 @@ static S_TASK task[MAX_TASK] = {
 	{500/LOOP_MS, mw_gps_refresh},
 	{1000/LOOP_MS, mw_keepalive},
 	{1000/LOOP_MS, mw_box_refresh},
+	{1000/LOOP_MS, mw_analog_refresh},
 	{500/LOOP_MS, do_failsafe} //ensure it runs every 500ms
 };
 
@@ -275,6 +277,11 @@ void mw_box_refresh() {
 	mspmsg_BOX_parse(&boxconf,&mw_msg);
 }
 
+void mw_analog_refresh() {
+	mspmsg_ANALOG_serialize(&mw_msg);
+	shm_put_outgoing(&mw_msg);
+}
+
 void mw_attitude_refresh() {
 	mspmsg_ATTITUDE_serialize(&mw_msg);
 	shm_put_outgoing(&mw_msg);
@@ -456,6 +463,24 @@ void mw_set_rc_tunning(uint8_t* v, uint8_t id) {
 	//refresh
 	mspmsg_RC_TUNING_serialize(&mw_msg);
 	shm_put_outgoing(&mw_msg);	
+}
+
+uint16_t mw_get_battery_voltage() {
+	struct S_MSP_ANALOG analog;
+	
+	shm_get_incoming(&mw_msg,MSP_ANALOG);
+	mspmsg_ANALOG_parse(&analog,&mw_msg);
+
+	return analog.vbat;
+}
+
+uint16_t mw_get_battery_amp() {
+	struct S_MSP_ANALOG analog;
+	
+	shm_get_incoming(&mw_msg,MSP_ANALOG);
+	mspmsg_ANALOG_parse(&analog,&mw_msg);
+
+	return analog.amperage;	
 }
 
 void mw_get_rth_alt(uint16_t *alt) {
