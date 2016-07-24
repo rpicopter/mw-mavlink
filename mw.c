@@ -23,6 +23,7 @@ static struct S_MSP_WP homepos;
 static int16_t heading_initial=0;
 
 static struct S_MSG mw_msg;
+static struct S_MSP_STATUS status;
 static struct S_MSP_BOXCONFIG boxconf;
 static struct S_MSP_RC rc = {.throttle=1000,.yaw=1500,.pitch=1500,.roll=1500,.aux1=1500,.aux2=1500,.aux3=1500,.aux4=1500};
 
@@ -104,6 +105,7 @@ uint8_t mw_init() {
 		mssleep(50);
 		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
 	}
+	mspmsg_STATUS_parse(&status,&mw_msg);
 
 	filter = MSP_MISC;
 	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
@@ -123,16 +125,6 @@ uint8_t mw_init() {
 		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
 	} 	
 
-	filter = MSP_NAV_CONFIG;
-	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
-	while (1) {
-		mspmsg_NAV_CONFIG_serialize(&mw_msg);
-		shm_put_outgoing(&mw_msg);
-		mssleep(50);
-		if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
-	} 
-
-	//boxids
 	filter = MSP_BOXIDS;
 	shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
 	while (1) {
@@ -147,6 +139,18 @@ uint8_t mw_init() {
 
 	mspmsg_BOX_serialize(&mw_msg);
 	shm_put_outgoing(&mw_msg);	
+
+	if (msp_has_gps(&status)) {
+		filter = MSP_NAV_CONFIG;
+		shm_scan_incoming_f(&mw_msg,&filter,1); //invalidate
+		while (1) {
+			mspmsg_NAV_CONFIG_serialize(&mw_msg);
+			shm_put_outgoing(&mw_msg);
+			mssleep(50);
+			if (shm_scan_incoming_f(&mw_msg,&filter,1)) break; //got the response
+		} 
+	}
+
 
 	failsafe_mode = 0;
 
@@ -300,7 +304,6 @@ void mw_gps_refresh() {
 void mw_keepalive() {
 	//keep alive for MultiWii and the service
 	static uint8_t err_counter = 0; //number of missed status messages
-	struct S_MSP_STATUS status;
 	uint8_t filter;
 
 	mspmsg_LOCALSTATUS_serialize(&mw_msg,NULL);
@@ -594,6 +597,17 @@ void mw_altitude(int32_t *alt) {
 void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t *vel, uint16_t *cog, uint8_t *satellites_visible) {
 	struct S_MSP_RAW_GPS gps;
 	
+	if (!msp_has_gps(&status)) {
+		if (fix) (*fix) = 0;
+		if (lat) (*lat) = 0;
+		if (lon) (*lon) = 0;
+		if (alt) (*alt) = 0;
+		if (vel) (*vel) = 0;
+		if (cog) (*cog) = 0;
+		if (satellites_visible) (*satellites_visible) = 0;
+		return;
+	}
+
 	shm_get_incoming(&mw_msg,MSP_RAW_GPS);
 	mspmsg_RAW_GPS_parse(&gps,&mw_msg);	
 
@@ -608,9 +622,9 @@ void mw_raw_gps(uint8_t *fix, int32_t *lat, int32_t *lon, int32_t *alt, uint16_t
 
 void mw_get_homepos(int32_t *lat, int32_t *lon, int32_t *alt) {
 	if (!has_homepos) {
-		if (lat) lat = NULL;
-		if (lon) lon = NULL;
-		if (alt) alt = NULL;
+		if (lat) *lat = 0;
+		if (lon) *lon = 0;
+		if (alt) *alt = 0;
 		return;
 	}
 
@@ -723,11 +737,7 @@ void mw_get_signal(int8_t *rssi, int8_t *noise) {
 uint32_t mw_sys_status_sensors() {
 	//we take it from status message
 	uint32_t ret = 0;
-	struct S_MSP_STATUS status;
 //	struct S_MSP_BOXCONFIG boxconfig;
-	
-	shm_get_incoming(&mw_msg,MSP_STATUS);
-	mspmsg_STATUS_parse(&status,&mw_msg);
 
 /*
 	shm_get_incoming(&mw_msg,MSP_BOXIDS);
@@ -760,11 +770,6 @@ uint8_t mw_state() {
 }
 
 uint8_t mw_mode_flag() {
-	struct S_MSP_STATUS status;
-
-	shm_get_incoming(&mw_msg,MSP_STATUS);
-	mspmsg_STATUS_parse(&status,&mw_msg);
-
 	uint8_t ret = 0;
 	if (msp_is_armed(&status)) ret |= (MAV_MODE_FLAG_SAFETY_ARMED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED);
 	if (msp_is_boxactive(&status,&boxconf,BOXBARO) || msp_is_boxactive(&status,&boxconf,BOXHORIZON)) ret |= MAV_MODE_FLAG_STABILIZE_ENABLED;
@@ -818,11 +823,6 @@ uint8_t mw_type() {
 }
 
 uint8_t is_mode_rth() {
-	struct S_MSP_STATUS status;
-
-	shm_get_incoming(&mw_msg,MSP_STATUS);
-	mspmsg_STATUS_parse(&status,&mw_msg);
-
 	if (msp_is_boxactive(&status,&boxconf,BOXHORIZON)==0) return 0;
 
 	if (msp_is_boxactive(&status,&boxconf,BOXGPSHOME)==0) return 0;
@@ -831,10 +831,6 @@ uint8_t is_mode_rth() {
 }
 
 uint8_t is_mode_baro() {
-	struct S_MSP_STATUS status;
-
-	shm_get_incoming(&mw_msg,MSP_STATUS);
-	mspmsg_STATUS_parse(&status,&mw_msg);
 
 	if (msp_is_boxactive(&status,&boxconf,BOXBARO)==0) return 0;	
 
