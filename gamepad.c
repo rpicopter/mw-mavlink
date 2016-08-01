@@ -5,7 +5,7 @@
 
 #define TRIMDELTA 5
 
-#define BUTTONS_COUNT CHECKBOXITEMS+3+4 //+1 for reset_throttle, +1 for test mapping +1 failsafe_Reset + 4 for trims
+#define BUTTONS_COUNT CHECKBOXITEMS+4+4 //+1 for reset_throttle, +2 for custom mapping +1 failsafe_Reset + 4 for trims
 
 static uint8_t mapping[BUTTONS_COUNT]; 
 static uint8_t threshold[3]; //yaw, pitch, roll
@@ -47,7 +47,9 @@ const char* gamepad_get_button_name(uint8_t i) {
 	
 	if (i-c++==0) return "BTN_THROT_OFF";
 
-	if (i-c++==0) return "BTN_TEST";
+	if (i-c++==0) return "BTN_CUSTOM1";
+
+	if (i-c++==0) return "BTN_CUSTOM2";
 
 	if (i-c++==0) return "BTN_FS_RST";
 
@@ -73,9 +75,12 @@ void gamepad_button_pressed(uint8_t i) { //i -
 
 	if (i-c++==0) {	gamepad_control_reset_throttle(); return; } //BTN_THROT_OFF
 
-	if (i-c++==0) {	 //BTN_TEST
+	if (i-c++==0) {	 //BTN_CUSTOM1
 		mw_panic_start();
-		//mw_disarm();
+	}
+
+	if (i-c++==0) {	 //BTN_CUSTOM2
+		mw_rth_start();
 	}
 
 	if (i-c++==0) {	failsafe_reset(); return; } //BTN_FS_RST
